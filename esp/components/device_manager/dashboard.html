@@ -1,0 +1,770 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>BLE 设备管理</title>
+    <style>
+      :root {
+        font-family:
+          system-ui,
+          -apple-system,
+          sans-serif;
+        color: #17292b;
+        background: #f1f5f4;
+        font-size: 14px;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+      }
+      main {
+        max-width: 1320px;
+        margin: auto;
+        padding: 28px;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      h1 {
+        font-size: 26px;
+        margin: 8px 0;
+      }
+      h2 {
+        font-size: 18px;
+        margin: 0;
+      }
+      p {
+        line-height: 1.65;
+        color: #526768;
+      }
+      .eyebrow {
+        font-size: 11px;
+        letter-spacing: 2px;
+        color: #387570;
+      }
+      a {
+        color: #11665e;
+      }
+      .toolbar {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      button,
+      .button {
+        font: inherit;
+        cursor: pointer;
+        padding: 9px 13px;
+        border: 1px solid #c5d4cf;
+        border-radius: 8px;
+        background: #fff;
+        color: #204841;
+        text-decoration: none;
+      }
+      button.primary {
+        background: #16685d;
+        color: white;
+        border-color: #16685d;
+      }
+      button.danger {
+        color: #a23434;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: wait;
+      }
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 12px;
+        margin: 24px 0;
+      }
+      .card,
+      section {
+        background: #fff;
+        border: 1px solid #dce5e1;
+        border-radius: 12px;
+      }
+      .card {
+        padding: 18px;
+      }
+      .card strong {
+        display: block;
+        font-size: 25px;
+        margin: 8px 0;
+      }
+      .muted {
+        color: #647a75;
+        font-size: 12px;
+      }
+      section {
+        padding: 20px;
+        margin-bottom: 16px;
+      }
+      .section-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .scroll {
+        overflow: auto;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        margin-top: 14px;
+        white-space: nowrap;
+      }
+      th,
+      td {
+        padding: 12px 9px;
+        border-bottom: 1px solid #e5ece8;
+        text-align: left;
+      }
+      th {
+        font-size: 12px;
+        color: #667a75;
+        font-weight: 500;
+      }
+      td.name {
+        min-width: 170px;
+      }
+      td small {
+        display: block;
+        color: #778984;
+        font-family: monospace;
+        margin-top: 4px;
+      }
+      .pill {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 20px;
+        background: #edf3f0;
+        color: #526b63;
+      }
+      .pill.online {
+        background: #dff2e9;
+        color: #196749;
+      }
+      #message {
+        position: sticky;
+        top: 8px;
+        z-index: 3;
+        border-radius: 8px;
+        padding: 12px;
+        background: #fff1d9;
+        color: #704807;
+        margin: 12px 0;
+        display: none;
+      }
+      .empty {
+        text-align: center;
+        padding: 30px;
+        color: #6b8178;
+      }
+      dialog {
+        border: 1px solid #c5d4cf;
+        border-radius: 12px;
+        width: min(650px, 95vw);
+        padding: 24px;
+        max-height: 92vh;
+      }
+      dialog::backdrop {
+        background: #142b2666;
+      }
+      label {
+        display: block;
+        margin-top: 14px;
+        color: #425f54;
+      }
+      input,
+      select,
+      textarea {
+        font: inherit;
+        width: 100%;
+        padding: 9px;
+        border: 1px solid #bccfc5;
+        border-radius: 6px;
+        margin-top: 5px;
+        background: white;
+      }
+      input[type="checkbox"] {
+        width: auto;
+        margin: 0 6px 0 0;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      textarea {
+        font-family: monospace;
+        min-height: 110px;
+      }
+      dialog .toolbar {
+        justify-content: flex-end;
+        margin-top: 22px;
+      }
+      .footnote {
+        font-size: 12px;
+        color: #60796c;
+        margin: 12px 0 0;
+      }
+      #connection {
+        font-size: 12px;
+      }
+      details {
+        margin-top: 14px;
+      }
+      #diagExtra {
+        white-space: pre-wrap;
+        font-family: monospace;
+        font-size: 12px;
+      }
+      @media (max-width: 740px) {
+        main {
+          padding: 16px;
+        }
+        header {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+        .cards {
+          grid-template-columns: 1fr 1fr;
+        }
+        .grid {
+          grid-template-columns: 1fr;
+        }
+        .section-head {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <div class="eyebrow">ESP32-C5 · LOCAL GATEWAY</div>
+          <h1>BLE 设备管理</h1>
+          <span id="connection" class="muted">正在连接网关…</span>
+        </div>
+        <div class="toolbar">
+          <a class="button" href="/config">Wi-Fi / MQTT 设置</a
+          ><button id="refresh">刷新</button>
+        </div>
+      </header>
+      <div id="message" role="status"></div>
+      <div class="cards">
+        <div class="card">
+          <span class="muted">BLE 已连接 / 上限</span
+          ><strong id="links">—</strong
+          ><span id="pending" class="muted">—</span>
+        </div>
+        <div class="card">
+          <span class="muted">内部 RAM 可用</span><strong id="heap">—</strong
+          ><span id="minimum" class="muted">—</span>
+        </div>
+        <div class="card">
+          <span class="muted">PSRAM 可用</span><strong id="psram">—</strong
+          ><span id="psramTotal" class="muted">—</span>
+        </div>
+        <div class="card">
+          <span class="muted">MQTT 发送缓存</span><strong id="outbox">—</strong
+          ><span id="mqtt" class="muted">—</span>
+        </div>
+      </div>
+      <section>
+        <div class="section-head">
+          <h2>已登记设备 <span id="count" class="muted">0 / 32</span></h2>
+          <div class="toolbar">
+            <a class="button" href="/api/backup" download>导出设备配置</a
+            ><button id="import">导入配置</button
+            ><input
+              id="file"
+              type="file"
+              accept="application/json,.json"
+              hidden
+            /><button id="add" class="primary">添加设备</button>
+          </div>
+        </div>
+        <p class="footnote">
+          连接型设备自动恢复连接与订阅；广播型设备定期监听，不占用连接名额。暂停状态仅在本次运行中有效。
+        </p>
+        <div class="scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>设备</th>
+                <th>状态 / 信号</th>
+                <th>订阅 / 连接间隔</th>
+                <th>收取 / 发送</th>
+                <th>入队失败</th>
+                <th>诊断</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="devices"></tbody>
+          </table>
+        </div>
+        <div id="empty" class="empty">
+          尚未登记设备。可手动添加，或从附近设备中选择。
+        </div>
+        <details>
+          <summary>网关详细诊断</summary>
+          <p id="diagExtra"></p>
+        </details>
+      </section>
+      <section>
+        <div class="section-head">
+          <h2>附近设备</h2>
+          <button id="scan">扫描 5 秒</button>
+        </div>
+        <p class="footnote">
+          扫描请求会等待当前连接尝试结束。列表最多保留 64 台最近发现的设备。
+        </p>
+        <div class="scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>广播名称 / 地址</th>
+                <th>地址类型</th>
+                <th>RSSI</th>
+                <th>最近发现</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="seen"></tbody>
+          </table>
+        </div>
+      </section>
+      <p class="footnote">
+        保存或导入会替换设备清单并重启生效。备份仅含设备登记与订阅策略，不包含
+        Wi-Fi / MQTT 密码。该面板用于可信局域网。
+      </p>
+    </main>
+    <dialog id="editor">
+      <form id="deviceForm">
+        <h2 id="editorTitle">添加设备</h2>
+        <div class="grid">
+          <label
+            >名称<input
+              id="alias"
+              maxlength="48"
+              required
+              placeholder="例如：客厅温度计" /></label
+          ><label
+            >蓝牙地址<input
+              id="address"
+              required
+              pattern="[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}"
+              placeholder="AA:BB:CC:DD:EE:FF"
+          /></label>
+        </div>
+        <div class="grid">
+          <label
+            >工作方式<select id="mode">
+              <option value="connection">持续连接，自动重连</option>
+              <option value="broadcast">广播监听</option>
+            </select></label
+          ><label
+            >地址类型<select id="addressType">
+              <option value="0">Public（0）</option>
+              <option value="1">Random（1）</option>
+              <option value="2">RPA Public（2）</option>
+              <option value="3">RPA Random（3）</option>
+            </select></label
+          >
+        </div>
+        <label><input id="enabled" type="checkbox" checked />启用设备</label>
+        <div class="grid">
+          <label
+            >最小连接间隔（ms）<input
+              id="intervalMin"
+              type="number"
+              min="15"
+              max="4000"
+              step="5"
+              value="100"
+              required /></label
+          ><label
+            >最大连接间隔（ms）<input
+              id="intervalMax"
+              type="number"
+              min="15"
+              max="4000"
+              step="5"
+              value="200"
+              required
+          /></label>
+        </div>
+        <div class="grid">
+          <label
+            >上报处理<select id="reportMode">
+              <option value="latest">保留每个特征的最新值</option>
+              <option value="stream">按顺序传递每条通知</option>
+            </select></label>
+        </div>
+        <label
+          >自动恢复的订阅（最多 4 条）<textarea
+            id="subscriptions"
+            placeholder="每行：服务UUID 特征UUID notify或indicate&#10;180F 2A19 notify"
+          ></textarea>
+        </label>
+        <p class="footnote">
+          每台设备最多缓冲 8 条，网关轮转发送，最多约 160
+          条/秒。逐条模式也受队列容量和 MQTT 可用性限制。广播监听无需填写订阅。
+        </p>
+        <div id="formError" role="alert" style="color: #a23434"></div>
+        <div class="toolbar">
+          <button type="button" id="cancel">取消</button
+          ><button class="primary" type="submit">保存并重启</button>
+        </div>
+      </form>
+    </dialog>
+    <script>
+      "use strict";
+      const $ = (id) => document.getElementById(id);
+      let registry = { version: 1, devices: [] },
+        editing = -1,
+        busy = false,
+        refreshing = false,
+        rebooting = false;
+      const states = {
+        disabled: "已禁用",
+        paused: "已暂停",
+        broadcast: "广播监听",
+        connected: "已连接",
+        connecting: "连接中",
+        backoff: "等待重连",
+      };
+      const size = (n) =>
+        Number.isFinite(n) ? (n / 1024).toFixed(1) + " KiB" : "—";
+      function message(text) {
+        $("message").textContent = text;
+        $("message").style.display = text ? "block" : "none";
+      }
+      async function api(path, body) {
+        const r = await fetch(
+          path,
+          body === undefined
+            ? { cache: "no-store" }
+            : {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+              },
+        );
+        const j = await r.json();
+        if (!r.ok || j.ok === false) throw Error(j.error || "请求失败");
+        return j;
+      }
+      function cell(row, text) {
+        const el = document.createElement("td");
+        el.textContent = text;
+        row.append(el);
+        return el;
+      }
+      function button(parent, text, fn) {
+        const b = document.createElement("button");
+        b.textContent = text;
+        b.addEventListener("click", () =>
+          Promise.resolve(fn()).catch((e) => message(e.message)),
+        );
+        parent.append(b);
+        return b;
+      }
+      function renderDevices(data) {
+        registry = { version: 1, devices: data.devices };
+        $("count").textContent = data.devices.length + " / 32";
+        $("empty").hidden = !!data.devices.length;
+        $("devices").replaceChildren();
+        data.devices.forEach((d, i) => {
+          const r = data.states.find((s) => s.device === d.device) || {},
+            tr = document.createElement("tr");
+          const name = cell(tr, d.alias || d.device);
+          name.className = "name";
+          const mac = document.createElement("small");
+          mac.textContent = d.device;
+          name.append(mac);
+          const state = cell(tr, "");
+          const badge = document.createElement("span");
+          badge.className = "pill" + (r.state === "connected" ? " online" : "");
+          badge.textContent = states[r.state] || "未知";
+          state.append(badge);
+          const signal = document.createElement("small");
+          signal.textContent =
+            r.rssi === undefined ? "RSSI 未知" : r.rssi + " dBm";
+          state.append(signal);
+          cell(
+            tr,
+            (r.restoredSubscriptions || 0) +
+              " / " +
+              d.subscriptions.length +
+              " · " +
+              (r.actualIntervalMs || "—") +
+              " ms",
+          );
+          cell(tr, (r.received || 0) + " / " + (r.published || 0));
+          cell(tr, r.dropped || 0);
+          const diagnostic = cell(tr, "");
+          diagnostic.textContent = r.lastError
+            ? (r.lastErrorText || "错误") + " (" + r.lastError + ")"
+            : r.servicesReady
+              ? "服务就绪"
+              : "—";
+          const detail = document.createElement("small");
+          detail.textContent =
+            "重试 " +
+            Math.ceil((r.retryInMs || 0) / 1000) +
+            "s" +
+            (r.intervalStatus ? " · 间隔错误 " + r.intervalStatus : "");
+          diagnostic.append(detail);
+          const ops = cell(tr, "");
+          ops.className = "toolbar";
+          button(ops, r.paused ? "恢复" : "暂停", () =>
+            api("/api/action", {
+              op: r.paused ? "resume" : "pause",
+              device: d.device,
+            }).then(refresh),
+          );
+          button(ops, "编辑", () => edit(i));
+          button(ops, "删除", async () => {
+            if (confirm("删除 " + (d.alias || d.device) + " 并重启网关？"))
+              await save({
+                version: 1,
+                devices: registry.devices.filter((_, n) => n !== i),
+              });
+          }).className = "danger";
+          $("devices").append(tr);
+        });
+        if (data.loadError)
+          message(
+            "设备配置加载失败：" +
+              data.loadError +
+              "。请检查分区是否完整烧录，或重新导入备份。",
+          );
+      }
+      function renderSeen(data) {
+        $("seen").replaceChildren();
+        data.devices
+          .sort((a, b) => a.lastSeenAgoMs - b.lastSeenAgoMs)
+          .forEach((d) => {
+            const tr = document.createElement("tr");
+            const name = cell(tr, d.name || "未提供名称");
+            const mac = document.createElement("small");
+            mac.textContent = d.device;
+            name.append(mac);
+            cell(tr, d.addressType);
+            cell(tr, d.rssi + " dBm");
+            cell(tr, Math.floor(d.lastSeenAgoMs / 1000) + " 秒前");
+            const ops = cell(tr, "");
+            const exists = registry.devices.some((x) => x.device === d.device);
+            if (exists) ops.textContent = "已登记";
+            else button(ops, "登记", () => edit(-1, d));
+            $("seen").append(tr);
+          });
+      }
+      async function refresh() {
+        if (refreshing || rebooting) return;
+        refreshing = true;
+        try {
+          const [d, g, s] = await Promise.all([
+            api("/api/devices"),
+            api("/api/diagnostics"),
+            api("/api/seen"),
+          ]);
+          renderDevices(d);
+          renderSeen(s);
+          $("links").textContent =
+            g.connectedDevices + " / " + g.maxBleConnections;
+          $("pending").textContent = g.connectingDevices + " 台正在连接";
+          $("heap").textContent = size(g.freeInternalHeapBytes);
+          $("minimum").textContent =
+            "运行最低 " + size(g.minimumInternalHeapBytes);
+          $("psram").textContent = size(g.freePsramHeapBytes);
+          $("psramTotal").textContent = "容量 " + size(g.psramSizeBytes);
+          $("outbox").textContent = size(g.mqttOutboxBytes);
+          $("mqtt").textContent = g.mqttConnected
+            ? "MQTT 已连接"
+            : "MQTT 未连接";
+          $("connection").textContent =
+            "固件 " +
+            g.firmware +
+            " · 已运行 " +
+            Math.floor(g.uptimeMs / 60000) +
+            " 分钟 · 刚刚更新";
+          $("diagExtra").textContent =
+            "Flash: " +
+            size(g.flashSizeBytes) +
+            "\n内部最大连续块: " +
+            size(g.largestInternalBlockBytes) +
+            "\nWi-Fi: " +
+            (g.wifiConnected ? "已连接" : "未连接");
+        } catch (e) {
+          $("connection").textContent = "无法连接网关 · " + e.message;
+        } finally {
+          refreshing = false;
+        }
+      }
+      function edit(index, seen) {
+        if (busy) return;
+        if (index < 0 && registry.devices.length >= 32) {
+          message("最多登记 32 台设备");
+          return;
+        }
+        editing = index;
+        const d =
+          index >= 0
+            ? registry.devices[index]
+            : {
+                alias: seen?.name || "",
+                device: seen?.device || "",
+                addressType: seen?.addressType || 0,
+                mode: "connection",
+                enabled: true,
+                intervalMinMs: 100,
+                intervalMaxMs: 200,
+                reportMode: "latest",
+                subscriptions: [],
+              };
+        $("editorTitle").textContent = index < 0 ? "添加设备" : "编辑设备";
+        $("alias").value = d.alias;
+        $("address").value = d.device;
+        $("addressType").value = d.addressType;
+        $("mode").value = d.mode;
+        $("enabled").checked = d.enabled;
+        $("intervalMin").value = d.intervalMinMs;
+        $("intervalMax").value = d.intervalMaxMs;
+        $("reportMode").value = d.reportMode;
+        $("subscriptions").value = d.subscriptions
+          .map(
+            (s) =>
+              s.service +
+              " " +
+              s.characteristic +
+              " " +
+              (s.indicate ? "indicate" : "notify"),
+          )
+          .join("\n");
+        $("formError").textContent = "";
+        $("editor").showModal();
+      }
+      async function save(config) {
+        if (busy) return;
+        busy = true;
+        try {
+          await api("/api/devices", config);
+          $("editor").close();
+          rebooting = true;
+          message(
+            "设备配置已保存，网关正在重启。约 10 秒后自动刷新；若仍在配网热点中，请重新连接热点。",
+          );
+          setTimeout(() => {
+            rebooting = false;
+            location.reload();
+          }, 10000);
+        } finally {
+          busy = false;
+        }
+      }
+      $("deviceForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        try {
+          if (new TextEncoder().encode($("alias").value).length > 48)
+            throw Error("名称不能超过 48 字节，中文通常每字占 3 字节");
+          const subs = $("subscriptions").value.trim()
+            ? $("subscriptions")
+                .value.trim()
+                .split(/\n+/)
+                .map((line) => {
+                  const parts = line.trim().split(/\s+/);
+                  if (
+                    parts.length !== 3 ||
+                    !["notify", "indicate"].includes(parts[2])
+                  )
+                    throw Error("订阅格式：服务UUID 特征UUID notify或indicate");
+                  return {
+                    service: parts[0],
+                    characteristic: parts[1],
+                    indicate: parts[2] === "indicate",
+                  };
+                })
+            : [];
+          if ($("mode").value === "broadcast" && subs.length)
+            throw Error("广播监听模式请清空订阅");
+          const d = {
+            ...(editing >= 0 ? registry.devices[editing] : {}),
+            alias: $("alias").value,
+            device: $("address").value.toUpperCase(),
+            addressType: Number($("addressType").value),
+            mode: $("mode").value,
+            enabled: $("enabled").checked,
+            intervalMinMs: Number($("intervalMin").value),
+            intervalMaxMs: Number($("intervalMax").value),
+            reportMode: $("reportMode").value,
+            subscriptions: subs,
+          };
+          if (d.intervalMinMs > d.intervalMaxMs)
+            throw Error("最小连接间隔不能大于最大值");
+          const devices = structuredClone(registry.devices);
+          if (editing < 0) devices.push(d);
+          else devices[editing] = d;
+          await save({ version: 1, devices });
+        } catch (err) {
+          $("formError").textContent = err.message;
+        }
+      });
+      $("cancel").onclick = () => $("editor").close();
+      $("add").onclick = () => edit(-1);
+      $("refresh").onclick = refresh;
+      $("scan").onclick = async () => {
+        try {
+          await api("/api/action", { op: "scan" });
+          message("扫描已加入调度，将在当前连接尝试结束后执行。");
+          setTimeout(refresh, 6000);
+        } catch (e) {
+          message(e.message);
+        }
+      };
+      $("import").onclick = () => $("file").click();
+      $("file").onchange = async () => {
+        try {
+          const file = $("file").files[0];
+          if (!file) return;
+          if (file.size > 32768) throw Error("备份文件不能超过 32 KiB");
+          const data = JSON.parse(await file.text());
+          if (
+            data.version !== 1 ||
+            !Array.isArray(data.devices) ||
+            data.devices.length > 32
+          )
+            throw Error("备份格式或版本不正确");
+          if (
+            confirm(
+              "导入将替换全部设备登记（" +
+                data.devices.length +
+                " 台）并重启，是否继续？",
+            )
+          )
+            await save(data);
+        } catch (e) {
+          message(e.message);
+        } finally {
+          $("file").value = "";
+        }
+      };
+      refresh();
+      setInterval(refresh, 3000);
+    </script>
+  </body>
+</html>

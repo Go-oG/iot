@@ -1,0 +1,98 @@
+{
+  "name": "ESP32-C5 BLE 网关合并固件",
+  "version": "0.7.0",
+  "projectName": "esp32c5_ble_gateway",
+  "target": "esp32c5",
+  "chip": "ESP32-C5",
+  "board": "N32R8",
+  "flashSize": "32MB",
+  "psramSize": "8MB (Quad, 80MHz)",
+  "idfVersion": "v6.1",
+  "bluetoothStack": "Bluedroid BLE (GATT Client, 最多 32 连接)",
+  "buildTime": "2026-09-19 10:40:20",
+  "mergedFile": "firmware_merged.bin",
+  "mergedSize": 2052256,
+  "mergedSha256": "4d43cccfa6cb141f4ac7a603527fa72d470c3f0ecd8f0764571e62f6d6ebc201",
+  "flashOffset": "0x0",
+  "flashMode": "dio",
+  "flashFreq": "80m",
+  "flashSizeArg": "32MB",
+  "eraseFirst": true,
+  "images": [
+    {
+      "name": "bootloader/bootloader.bin",
+      "offset": "0x2000",
+      "size": 22128,
+      "sha256": "b32402c15a231c6d8777746ca11a56b495ad0cecd39b872fbd3d75cf36681530"
+    },
+    {
+      "name": "partition_table/partition-table.bin",
+      "offset": "0x8000",
+      "size": 3072,
+      "sha256": "c6bd990a76014eabd4ae26bc61d977c0387128d81d1cef7fee09f4859b4ae711"
+    },
+    {
+      "name": "esp32c5_ble_gateway.bin",
+      "offset": "0x20000",
+      "size": 1921184,
+      "sha256": "1da60050c74ab376355284e9c3c211f10fb4d039aa13316bb25b8639dfe8459d"
+    }
+  ],
+  "partitions": [
+    {"name": "nvs", "type": "data/nvs", "offset": "0x9000", "size": "64KB"},
+    {"name": "phy_init", "type": "data/phy", "offset": "0x19000", "size": "4KB"},
+    {"name": "factory", "type": "app/factory", "offset": "0x20000", "size": "4MB"},
+    {"name": "registry", "type": "data/nvs", "offset": "0x420000", "size": "128KB"},
+    {"name": "storage", "type": "data/custom", "offset": "0x440000", "size": "27.75MB"}
+  ],
+  "entryPoints": {
+    "mqttDown": "iot/v1/{gatewayId}/down",
+    "mqttUp": "iot/v1/{gatewayId}/up",
+    "mqttPresence": "iot/v1/{gatewayId}/presence",
+    "websocket": "ws://<网关地址>/ble/v1",
+    "mdns": "_blegw._tcp",
+    "configPortal": "http://192.168.4.1/ (AP SSID BTGW-XXXXXX)"
+  },
+  "protocol": {
+    "version": 1,
+    "operations": ["scan", "connect", "disconnect", "read", "write", "subscribe", "batch", "snapshot", "manage"],
+    "reservedOperations": ["discover", "waitNotify"],
+    "requireRegistration": true,
+    "batchConnect": true,
+    "managementActions": ["status", "backup", "save", "upsert", "remove", "pause", "resume", "diagnostics", "config.get", "config.set", "restart"],
+    "errorCodes": {
+      "0": "OK",
+      "1001": "INVALID_REQUEST",
+      "1002": "UNSUPPORTED_OP",
+      "1003": "INVALID_ARGUMENT",
+      "2001": "GATEWAY_BUSY",
+      "2002": "QUEUE_TIMEOUT",
+      "2003": "CONNECTION_LIMIT",
+      "3001": "DEVICE_NOT_FOUND",
+      "3002": "NOT_CONNECTED",
+      "3003": "CONNECT_TIMEOUT",
+      "3004": "DEVICE_NOT_REGISTERED",
+      "3101": "DISCONNECTED",
+      "4001": "SERVICE_NOT_FOUND",
+      "4002": "CHAR_NOT_FOUND",
+      "4101": "READ_FAILED",
+      "4201": "WRITE_FAILED",
+      "4301": "SUBSCRIBE_FAILED",
+      "4901": "GATT_TIMEOUT",
+      "4999": "SKIPPED"
+    }
+  },
+  "management": {
+    "transport": "与设备控制共用 iot/v1/{gatewayId}/down|up，不额外增加主题",
+    "mutuallyExclusiveWrites": true,
+    "restartIsDeferred": true,
+    "passwordsOmitted": true
+  },
+  "notes": [
+    "只连接用户登记过的设备，扫描结果不会触发连接",
+    "合并固件从 0x0 写入，覆盖 NVS 与分区表，烧录后需要重新配网并重新登记设备",
+    "registry 分区在 0x420000，未被合并镜像覆盖，如内容异常网关会自动忽略并记录 loadError",
+    "0.7.0 新增 manage 管理通道：登记增删改、暂停恢复、诊断、网络配置与重启均通过 MQTT 下发",
+    "0.7.0 统一 hello 与 diagnostics 上报的固件版本号，此前 diagnostics 误报 0.1.0"
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "id": "aquarium-01",
+  "name": "通用鱼缸灯",
+  "macd": "AA:BB:CC:DD:EE:FF",
+  "bleServices": [
+    {
+      "uuid": "8332af20-6d0e-4eea-bb35-665544332211",
+      "name": "灯光控制",
+      "characteristicList": [
+        {
+          "uuid": "8332af20-6d0e-4eea-bb35-665544332211",
+          "name": "灯光控制"
+        }
+      ]
+    }
+  ],
+  "functions": [
+    { "type": "power", "status": true },
+    {
+      "type": "light",
+      "status": { "red": 15, "green": 15, "blue": 17, "white": 25, "uv": 0 }
+    },
+    { "type": "temperature", "status": 31 },
+    { "type": "fanSpeed", "status": "low" },
+    {
+      "type": "timer",
+      "status": {
+        "index": 1,
+        "enabled": false,
+        "startHour": 8,
+        "startMinute": 0,
+        "endHour": 20,
+        "endMinute": 0,
+        "sunriseSunsetEnabled": false,
+        "sunriseMinutes": 0,
+        "sunsetMinutes": 0
+      }
+    }
+  ]
+}

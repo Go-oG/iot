@@ -1,0 +1,8 @@
+# Name, Type, SubType, Offset, Size, Flags
+nvs,     data, nvs,     0x9000,  0x10000,
+phy_init,data, phy,     0x19000, 0x1000,
+factory, app,  factory, 0x20000, 0x400000,
+# 设备登记单独保存，避免批量导入占满网关和配对信息使用的 NVS
+registry,data, nvs,     0x420000,0x20000,
+# 自定义数据分区，预留给红外码库和历史数据，当前尚未读写或挂载
+storage, data, 0x40,    0x440000,0x1bc0000,

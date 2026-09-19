@@ -1,0 +1,11 @@
+menu "BLE Gateway"
+
+    config GW_CONFIG_BUTTON_GPIO
+        int "Configuration button GPIO (active low)"
+        range 0 28
+        default 28
+        help
+            配置按钮低电平有效，按住三秒打开配网页面
+            ESP32-C5 开发板 BOOT 按钮通常连接 GPIO28
+
+endmenu

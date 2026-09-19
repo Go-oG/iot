@@ -1,0 +1,94 @@
+ESP32-C5 BLE 网关 合并固件 0.7.0（N32R8 / 32MB Flash + 8MB PSRAM）
+================================================================
+
+一、准备工作
+------------
+1. 安装 Python 3.8 以上版本，安装时勾选 "Add Python to PATH"
+   下载地址: https://www.python.org/downloads/windows/
+2. 安装 esptool（需要 4.8 或以上版本，ESP32-C5 必须）：
+       py -3 -m pip install --upgrade esptool
+3. 安装开发板 USB 转串口驱动（按板载芯片选择 CH340 或 CP210x）
+4. 用支持数据传输的 USB 线连接开发板
+
+
+二、烧录方法
+------------
+方法一（推荐）：双击 flash_windows.bat
+    脚本会自动检查 Python 与 esptool、查找串口、整片擦除并写入固件，
+    完成后暂停显示结果，便于查看日志。
+
+方法二：命令行手动执行
+    cd 到本目录后执行：
+        py -3 flash_windows.py                 自动查找串口
+        py -3 flash_windows.py --list          只列出可用串口
+        py -3 flash_windows.py --port COM5     指定串口
+        py -3 flash_windows.py --keep-flash    不整片擦除
+        py -3 flash_windows.py --baud 115200   降低波特率（烧录不稳定时）
+
+方法三：完全不依赖本脚本，直接使用 esptool 命令
+        py -3 -m esptool --chip esp32c5 --port COM5 --baud 460800 ^
+            --before default-reset --after hard-reset erase_flash
+        py -3 -m esptool --chip esp32c5 --port COM5 --baud 460800 ^
+            --before default-reset --after hard-reset write_flash ^
+            --flash-mode dio --flash-freq 80m --flash-size 32MB ^
+            0x0 firmware_merged.bin
+
+
+三、烧录后的状态
+----------------
+合并固件从 0x0 写入，会覆盖 bootloader、分区表和 NVS：
+
+1. Wi-Fi 与 MQTT 配置被清除，网关恢复出厂状态
+2. 设备登记保存在独立的 registry 分区（0x420000），未被本镜像覆盖；
+   若该区域内容与当前分区表不匹配，网关会忽略登记数据并在面板
+   /api/devices 的 loadError 字段提示，不影响启动
+3. 第一次启动、启动后 30 秒未连上 Wi-Fi，或运行时按住 BOOT 三秒，
+   会开启配网热点：
+       热点名称: BTGW-XXXXXX（后缀为 AP MAC 后三字节大写十六进制）
+       热点密码: btgw-xxxxxx（同一后缀的小写形式）
+       配置页面: http://192.168.4.1/
+
+建议烧录前在旧固件的管理面板导出设备配置备份（/api/backup），
+恢复后通过“导入配置”重新写回设备登记。
+
+
+四、常见问题
+------------
+1. 提示未找到串口 / 无法连接
+   - 关闭占用串口的程序（串口助手、Arduino IDE、另一个烧录窗口）
+   - 安装对应 USB 串口驱动，换 USB 口或换数据线
+   - 按住 BOOT 键，点按 RESET 后松开 BOOT，进入下载模式再试
+2. 可安装旧版 Windows 提示缺少驱动
+   - 使用 Win10 及以上版本，或手动安装 CH340 / CP210x 驱动
+3. 烧录中途失败
+   - 降低波特率重试: py -3 flash_windows.py --baud 115200
+   - 确认供电充足，避免使用劣质 USB 集线器
+4. 设备启动后找不到热点
+   - 确认下载模式之外的正常启动（重新上电）
+   - 用串口助手以 115200 波特率查看启动日志
+
+
+五、文件说明
+------------
+firmware_merged.bin     合并固件，从 0x0 写入，包含 bootloader(0x2000)、
+                        分区表(0x8000) 和应用(0x20000)，共 2052256 字节
+flash_windows.bat       Windows 一键烧录脚本
+flash_windows.py        烧录脚本主体，也可在 macOS / Linux 上运行
+firmware-info.json      版本、偏移、SHA256、分区表和协议能力说明
+SHA256SUMS.txt          各文件校验值
+
+固件版本: 0.7.0
+构建时间: 2026-09-19 10:40:20
+ESP-IDF : v6.1
+
+
+六、校验文件完整性
+------------------
+firmware_merged.bin 的 SHA256:
+    4d43cccfa6cb141f4ac7a603527fa72d470c3f0ecd8f0764571e62f6d6ebc201
+
+Windows 校验命令:
+    certutil -hashfile firmware_merged.bin SHA256
+
+macOS / Linux 校验全部文件:
+    shasum -a 256 -c SHA256SUMS.txt

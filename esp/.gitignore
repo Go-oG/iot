@@ -1,0 +1,8 @@
+/build/
+/dist/
+/managed_components/
+/sdkconfig
+/sdkconfig.old
+/sdk/
+.DS_Store
+/build-mqtt-check/
