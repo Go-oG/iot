@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:light/src/core/device/device.dart';
 import 'package:light/src/core/functions/base.dart';
 
-import '../../shared/app_widgets.dart';
-import '../../shared/device_control_widgets.dart';
+import '../../widgets/app_widgets.dart';
+import '../../widgets/device_card.dart';
+
 
 class PowerFunction extends BoolDeviceFunction {
   PowerFunction({

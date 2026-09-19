@@ -19,12 +19,11 @@ class _AppShellState extends State<AppShell> {
     ('首页', Icons.home_rounded),
     ('设备', Icons.hub_rounded),
     ('智能', Icons.alarm_on_rounded),
-    ('配色', Icons.palette_rounded),
   ];
 
   @override
   Widget build(BuildContext context) {
-    final controller = AppScope.controller;
+    final controller = AppScope.watch(context);
     if (controller.messageVersion != _lastMessageVersion) {
       _lastMessageVersion = controller.messageVersion;
       final message = controller.userMessage;

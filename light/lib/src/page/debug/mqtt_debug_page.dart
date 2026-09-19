@@ -9,7 +9,7 @@ import '../../core/keep_alive.dart';
 import '../../core/protocol/mqtt_debug_client.dart';
 import '../../core/protocol/protocol.dart';
 import '../../data/remote_settings.dart';
-import '../../shared/app_widgets.dart';
+import '../../widgets/app_widgets.dart';
 
 /// QoS 候选说明，同时用于底部选择和消息气泡展示
 const Map<int, String> _qosLabels = {

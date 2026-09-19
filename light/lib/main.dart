@@ -17,9 +17,9 @@ Future<void> main() async {
 }
 
 class MyApp extends StatefulWidget {
-  const MyApp({this.controller, super.key});
+  const MyApp({required this.controller, super.key});
 
-  final AppController? controller;
+  final AppController controller;
 
   @override
   State<MyApp> createState() => _MyAppState();
@@ -32,9 +32,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    AppScope.init();
+    AppScope.init(widget.controller);
     _router = buildAppRouter();
-    WidgetsBinding.instance.addPostFrameCallback((_) => AppScope.controller.startConnections());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) widget.controller.startConnections();
+    });
   }
 
   @override
@@ -52,11 +54,14 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp.router(
-      title: 'Light',
-      debugShowCheckedModeBanner: false,
-      theme: buildAppTheme(),
-      routerConfig: _router,
+    return AppScope(
+      controller: widget.controller,
+      child: MaterialApp.router(
+        title: 'Light',
+        debugShowCheckedModeBanner: false,
+        theme: buildAppTheme(),
+        routerConfig: _router,
+      ),
     );
   }
 }

@@ -5,9 +5,9 @@ import 'package:light/src/app/controller.dart';
 import 'package:light/src/app/scope.dart';
 import 'package:light/src/app/theme.dart';
 import 'package:light/src/data/models.dart';
-import 'package:light/src/shared/app_widgets.dart';
 
-import '../dialog/schedule.dart';
+import '../../dialog/schedule.dart';
+import '../../widgets/app_widgets.dart';
 
 class PlansPage extends StatefulWidget {
   const PlansPage({super.key});

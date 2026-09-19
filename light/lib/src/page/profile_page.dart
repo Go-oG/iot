@@ -4,9 +4,9 @@ import 'package:light/src/app/controller.dart';
 import 'package:light/src/app/scope.dart';
 import 'package:light/src/app/theme.dart';
 import 'package:light/src/data/models.dart';
-import 'package:light/src/shared/app_widgets.dart';
 
 import '../dialog/scene.dart';
+import '../widgets/app_widgets.dart';
 
 class ProfilePage extends StatelessWidget {
   const ProfilePage({super.key});
@@ -14,20 +14,37 @@ class ProfilePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final controller = AppScope.controller;
-    final visibleScenes = controller.scenes;
-    return ListView(
-      padding: const EdgeInsets.only(bottom: 24),
-      children: [
-        AppPageHeader(
-          title: '配色与数据',
-          subtitle: '为鱼缸收藏光色，一键切换',
-          action: AppIconButton(
-            icon: Icons.cloud_upload_outlined,
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('配色与数据'),
+        leading: BackButton(
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go('/devices');
+            }
+          },
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.cloud_upload_outlined),
+            tooltip: '导出数据',
             onPressed: () => controller.exportData(
               sharePositionOrigin: _shareOrigin(context),
             ),
           ),
-        ),
+        ],
+      ),
+      body: SafeArea(top: false, child: _buildContent(context, controller)),
+    );
+  }
+
+  Widget _buildContent(BuildContext context, AppController controller) {
+    final visibleScenes = controller.scenes;
+    return ListView(
+      padding: const EdgeInsets.only(top: 12, bottom: 24),
+      children: [
         SurfaceCard(
           margin: const EdgeInsets.symmetric(horizontal: 16),
           child: Column(

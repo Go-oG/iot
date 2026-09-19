@@ -3,23 +3,22 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-import '../app/controller.dart';
-import '../app/scope.dart';
-import '../app/theme.dart';
-import '../core/device/impl/generic_device.dart';
-import '../core/device_registry.dart';
-import '../core/functions/light.dart';
-import '../core/protocol/client.dart';
-import '../core/protocol/protocol.dart';
-import '../core/remote_gateway.dart';
-import '../data/device_configuration.dart';
-import '../data/models.dart';
-import '../shared/app_widgets.dart';
-import '../shared/remote_control_card.dart';
+import '../../app/controller.dart';
+import '../../app/scope.dart';
+import '../../app/theme.dart';
+import '../../core/device/impl/generic_device.dart';
+import '../../core/device_registry.dart';
+import '../../core/functions/light.dart';
+import '../../core/protocol/client.dart';
+import '../../core/protocol/protocol.dart';
+import '../../core/remote_gateway.dart';
+import '../../data/device_configuration.dart';
+import '../../data/models.dart';
+import '../../widgets/app_widgets.dart';
+import '../../widgets/remote_card.dart';
 
-/// 首页：与米家一致，用两列卡片展示全部设备
-///
-/// 卡片上可以直接开关灯，其余操作在设备详情页完成。
+/// 首页：用两列卡片展示全部设备
+/// 卡片上可以直接开关灯，其余操作在设备详情页完成
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
@@ -207,7 +206,7 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
-    final controller = AppScope.controller;
+    final controller = AppScope.watch(context);
     final remote = controller.mqttGateway;
     final items = _items(controller, remote);
     final online = controller.deviceRegistry.snapshot.deviceOnline;

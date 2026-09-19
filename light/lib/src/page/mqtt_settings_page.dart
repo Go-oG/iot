@@ -5,7 +5,7 @@ import 'package:light/src/app/scope.dart';
 import '../app/theme.dart';
 import '../core/protocol/protocol.dart';
 import '../data/remote_settings.dart';
-import '../shared/app_widgets.dart';
+import '../widgets/app_widgets.dart';
 
 class MqttSettingsPage extends StatefulWidget {
   const MqttSettingsPage({super.key});

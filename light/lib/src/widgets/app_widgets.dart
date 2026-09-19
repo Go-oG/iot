@@ -1,13 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:light/src/app/theme.dart';
+import 'package:marquee/marquee.dart';
 
 class AppPageHeader extends StatelessWidget {
-  const AppPageHeader({
-    required this.title,
-    required this.subtitle,
-    this.action,
-    super.key,
-  });
+  const AppPageHeader({required this.title, required this.subtitle, this.action, super.key});
 
   final String title;
   final String subtitle;
@@ -25,18 +21,10 @@ class AppPageHeader extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: const TextStyle(
-                    fontSize: 27,
-                    height: 1.05,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.8,
-                  ),
+                  style: const TextStyle(fontSize: 27, height: 1.05, fontWeight: FontWeight.w800, letterSpacing: -0.8),
                 ),
                 const SizedBox(height: 5),
-                Text(
-                  subtitle,
-                  style: const TextStyle(color: AppColors.muted, fontSize: 14),
-                ),
+                Text(subtitle, style: const TextStyle(color: AppColors.muted, fontSize: 14)),
               ],
             ),
           ),
@@ -72,13 +60,7 @@ class SurfaceCard extends StatelessWidget {
         color: color,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: borderColor ?? const Color(0x0D0878F9)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x0A0A3B7A),
-            blurRadius: 16,
-            offset: Offset(0, 5),
-          ),
-        ],
+        boxShadow: const [BoxShadow(color: Color(0x0A0A3B7A), blurRadius: 16, offset: Offset(0, 5))],
       ),
       child: child,
     );
@@ -86,21 +68,38 @@ class SurfaceCard extends StatelessWidget {
 }
 
 class SectionTitle extends StatelessWidget {
-  const SectionTitle(this.title, {this.trailing, super.key});
+  const SectionTitle(
+    this.title, {
+    this.titleIcon,
+    this.trailing,
+    super.key,
+    this.titleMaxWidth = double.infinity,
+    this.textStyle = const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+  });
 
   final String title;
+  final TextStyle textStyle;
+  final double titleMaxWidth;
+  final Widget? titleIcon;
   final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      mainAxisSize: MainAxisSize.max,
       children: [
         Expanded(
-          child: Text(
-            title,
-            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+          child: Row(
+            children: [
+              Flexible(
+                child: MarqueeText(text: title, textStyle: textStyle, maxWidth: titleMaxWidth),
+              ),
+              if (titleIcon != null) ...[const SizedBox(width: 6), titleIcon!],
+            ],
           ),
         ),
+        if (trailing != null) const SizedBox(width: 8),
         ?trailing,
       ],
     );
@@ -108,13 +107,7 @@ class SectionTitle extends StatelessWidget {
 }
 
 class AppIconButton extends StatelessWidget {
-  const AppIconButton({
-    required this.icon,
-    required this.onPressed,
-    this.filled = false,
-    this.tooltip,
-    super.key,
-  });
+  const AppIconButton({required this.icon, required this.onPressed, this.filled = false, this.tooltip, super.key});
 
   final IconData icon;
   final VoidCallback? onPressed;
@@ -137,12 +130,7 @@ class AppIconButton extends StatelessWidget {
 }
 
 class StatusPill extends StatelessWidget {
-  const StatusPill({
-    required this.label,
-    required this.color,
-    this.icon,
-    super.key,
-  });
+  const StatusPill({required this.label, required this.color, this.icon, super.key});
 
   final String label;
   final Color color;
@@ -152,24 +140,14 @@ class StatusPill extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(20),
-      ),
+      decoration: BoxDecoration(color: color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(20)),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (icon != null) ...[
-            Icon(icon, size: 13, color: color),
-            const SizedBox(width: 4),
-          ],
+          if (icon != null) ...[Icon(icon, size: 13, color: color), const SizedBox(width: 4)],
           Text(
             label,
-            style: TextStyle(
-              color: color,
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-            ),
+            style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w700),
           ),
         ],
       ),
@@ -177,49 +155,21 @@ class StatusPill extends StatelessWidget {
   }
 }
 
-class LampGlyph extends StatelessWidget {
-  const LampGlyph({this.size = 52, this.accent = AppColors.blue, super.key});
+class OnlineStatusView extends StatelessWidget {
+  final EdgeInsets margin;
 
-  final double size;
-  final Color accent;
+  const OnlineStatusView({required this.online, super.key, this.margin = EdgeInsets.zero});
+
+  final bool online;
 
   @override
   Widget build(BuildContext context) {
+    final color = online ? AppColors.green : AppColors.grey;
     return Container(
-      width: size,
-      height: size * 0.68,
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Colors.white, accent.withValues(alpha: 0.22)],
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-        ),
-        borderRadius: BorderRadius.only(
-          topLeft: Radius.elliptical(size * 0.48, size * 0.2),
-          topRight: Radius.elliptical(size * 0.48, size * 0.2),
-          bottomLeft: Radius.circular(size * 0.15),
-          bottomRight: Radius.circular(size * 0.15),
-        ),
-        border: Border.all(color: const Color(0x22071B4B)),
-        boxShadow: [
-          BoxShadow(
-            color: accent.withValues(alpha: 0.2),
-            blurRadius: 12,
-            offset: const Offset(0, 5),
-          ),
-        ],
-      ),
-      child: Align(
-        alignment: const Alignment(0, 0.6),
-        child: Container(
-          width: size * 0.5,
-          height: 3,
-          decoration: BoxDecoration(
-            color: accent.withValues(alpha: 0.45),
-            borderRadius: BorderRadius.circular(3),
-          ),
-        ),
-      ),
+      margin: margin,
+      width: 8,
+      height: 8,
+      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(20)),
     );
   }
 }
@@ -239,20 +189,12 @@ class SceneArtwork extends StatelessWidget {
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [
-            accent.withValues(alpha: 0.45),
-            accent,
-            const Color(0xFF0C2559),
-          ],
+          colors: [accent.withValues(alpha: 0.45), accent, const Color(0xFF0C2559)],
         ),
       ),
       child: Stack(
         children: [
-          Positioned(
-            right: 13,
-            top: 10,
-            child: Icon(Icons.water_rounded, color: Colors.white, size: 23),
-          ),
+          Positioned(right: 13, top: 10, child: Icon(Icons.water_rounded, color: Colors.white, size: 23)),
           Positioned(
             left: -8,
             right: -8,
@@ -294,18 +236,13 @@ class PowerButton extends StatelessWidget {
           ),
           boxShadow: [
             BoxShadow(
-              color: (enabled ? AppColors.blue : AppColors.muted).withValues(
-                alpha: 0.32,
-              ),
+              color: (enabled ? AppColors.blue : AppColors.muted).withValues(alpha: 0.32),
               blurRadius: 14,
               spreadRadius: 2,
             ),
           ],
         ),
-        child: const Icon(
-          Icons.power_settings_new_rounded,
-          color: Colors.white,
-        ),
+        child: const Icon(Icons.power_settings_new_rounded, color: Colors.white),
       ),
     );
   }
@@ -347,10 +284,7 @@ class ChannelSlider extends StatelessWidget {
           const SizedBox(width: 4),
           SizedBox(
             width: 48,
-            child: Text(
-              label,
-              style: const TextStyle(fontSize: 12, color: AppColors.muted),
-            ),
+            child: Text(label, style: const TextStyle(fontSize: 12, color: AppColors.muted)),
           ),
           Expanded(
             child: SliderTheme(
@@ -379,6 +313,57 @@ class ChannelSlider extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class MarqueeText extends StatelessWidget {
+  final String text;
+  final TextStyle textStyle;
+  final double maxWidth;
+
+  const MarqueeText({super.key, required this.text, required this.textStyle, this.maxWidth = double.infinity});
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: maxWidth),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final style = DefaultTextStyle.of(context).style.merge(textStyle);
+          final painter = TextPainter(
+            text: TextSpan(text: text, style: style),
+            textDirection: Directionality.of(context),
+            textScaler: MediaQuery.textScalerOf(context),
+            maxLines: 1,
+          )..layout();
+          final width = painter.width;
+          final height = painter.height;
+          painter.dispose();
+          // 短标题直接显示，溢出的标题在有界视口内滚动
+          if (!constraints.hasBoundedWidth || width <= constraints.maxWidth) {
+            return Text(text, style: style, maxLines: 1);
+          }
+          return SizedBox(
+            width: constraints.maxWidth,
+            height: height,
+            child: Marquee(
+              text: text,
+              style: style,
+              scrollAxis: Axis.horizontal,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              blankSpace: 20.0,
+              velocity: 100.0,
+              pauseAfterRound: const Duration(seconds: 1),
+              startPadding: 10.0,
+              accelerationDuration: const Duration(seconds: 1),
+              accelerationCurve: Curves.linear,
+              decelerationDuration: const Duration(milliseconds: 500),
+              decelerationCurve: Curves.easeOut,
+            ),
+          );
+        },
       ),
     );
   }

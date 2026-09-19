@@ -3,42 +3,18 @@ import 'package:light/src/core/device/device.dart';
 import 'package:light/src/core/protocol/wire.dart';
 
 import '../../app/theme.dart';
-import '../../shared/app_widgets.dart';
-import '../../shared/device_control_widgets.dart';
+import '../../widgets/app_widgets.dart';
+import '../../widgets/device_card.dart';
 import 'base.dart';
 
 class LightState {
-  static const mixed = LightState(
-    red: 44,
-    green: 44,
-    blue: 44,
-    white: 44,
-    uv: 44,
-  );
+  static const mixed = LightState(red: 44, green: 44, blue: 44, white: 44, uv: 44);
 
-  static const greenLight = LightState(
-    red: 32,
-    green: 42,
-    blue: 42,
-    white: 42,
-    uv: 42,
-  );
+  static const greenLight = LightState(red: 32, green: 42, blue: 42, white: 42, uv: 42);
 
-  static const redLight = LightState(
-    red: 63,
-    green: 47,
-    blue: 63,
-    white: 63,
-    uv: 63,
-  );
+  static const redLight = LightState(red: 63, green: 47, blue: 63, white: 63, uv: 63);
 
-  const LightState({
-    required this.red,
-    required this.green,
-    required this.blue,
-    required this.white,
-    required this.uv,
-  });
+  const LightState({required this.red, required this.green, required this.blue, required this.white, required this.uv});
 
   final int red;
   final int green;
@@ -54,9 +30,7 @@ class LightState {
   int get peak => [red, green, blue, white, uv].reduce((a, b) => a > b ? a : b);
 
   /// 五路通道的状态结构，与通用设备配置里的 `light.status` 一致
-  Map<String, Object> toJson() => {
-    for (final channel in LightChannel.values) channel.wire: levelOf(channel),
-  };
+  Map<String, Object> toJson() => {for (final channel in LightChannel.values) channel.wire: levelOf(channel)};
 
   int levelOf(LightChannel channel) => switch (channel) {
     LightChannel.red => red,
@@ -94,13 +68,7 @@ class LightState {
     final maximum = limit.clamp(1, 100);
     final average = (red + green + blue + white + uv) / 5;
     if (average == 0) {
-      return LightState(
-        red: 0,
-        green: 0,
-        blue: 0,
-        white: (target * 5).clamp(0, maximum),
-        uv: 0,
-      );
+      return LightState(red: 0, green: 0, blue: 0, white: (target * 5).clamp(0, maximum), uv: 0);
     }
     final requested = target / average;
     return _scaled(requested > maximum / peak ? maximum / peak : requested);
@@ -162,13 +130,7 @@ class LightControlBinding extends DeviceFunctionBinding<LightState> {
 
 class LightFunction extends ValueDeviceFunction<LightState> {
   LightFunction({
-    super.initialStatus = const LightState(
-      red: 15,
-      green: 15,
-      blue: 17,
-      white: 25,
-      uv: 0,
-    ),
+    super.initialStatus = const LightState(red: 15, green: 15, blue: 17, white: 25, uv: 0),
     required super.executeCall,
     super.refreshCall,
   });
@@ -205,12 +167,7 @@ class LightFunction extends ValueDeviceFunction<LightState> {
             if (options != null) {
               options.changeBrightness(v);
             } else {
-              binding.preview(
-                (_brightnessSource ?? binding.read()).withPowerPercent(
-                  v.round(),
-                  limit: limit,
-                ),
-              );
+              binding.preview((_brightnessSource ?? binding.read()).withPowerPercent(v.round(), limit: limit));
             }
           },
           onChangeEnd: (_) async {
@@ -223,17 +180,10 @@ class LightFunction extends ValueDeviceFunction<LightState> {
           },
         ),
         if (size == CardSize.large) ...[
-          const Padding(
-            padding: EdgeInsets.only(top: 12, bottom: 16),
-            child: Divider(),
-          ),
+          const Padding(padding: EdgeInsets.only(top: 12, bottom: 16), child: Divider()),
           const Text(
             '五路调色',
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-              color: AppColors.muted,
-            ),
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.muted),
           ),
           const SizedBox(height: 10),
           for (final channel in LightChannel.values)
@@ -245,9 +195,7 @@ class LightFunction extends ValueDeviceFunction<LightState> {
                 LightChannel.white => 'White',
                 LightChannel.uv => 'UV',
               },
-              icon: channel == LightChannel.white
-                  ? Icons.blur_on_rounded
-                  : Icons.light_mode_rounded,
+              icon: channel == LightChannel.white ? Icons.blur_on_rounded : Icons.light_mode_rounded,
               color: switch (channel) {
                 LightChannel.red => const Color(0xFFFF3131),
                 LightChannel.green => const Color(0xFF00C765),
@@ -263,11 +211,7 @@ class LightFunction extends ValueDeviceFunction<LightState> {
                 LightChannel.uv => value.uv,
               },
               max: limit.toDouble(),
-              onChanged: (v) => binding.preview(
-                binding
-                    .read()
-                    .withChannel(channel, v.round().clamp(0, limit)),
-              ),
+              onChanged: (v) => binding.preview(binding.read().withChannel(channel, v.round().clamp(0, limit))),
               onChangeEnd: () => binding.commit(binding.read()),
             ),
         ],
@@ -284,6 +228,5 @@ class LightFunction extends ValueDeviceFunction<LightState> {
   @override
   Priority get priority => Priority.high;
 
-  void setChannel(LightChannel channel, int value) =>
-      status = status.withChannel(channel, value.clamp(0, 100));
+  void setChannel(LightChannel channel, int value) => status = status.withChannel(channel, value.clamp(0, 100));
 }

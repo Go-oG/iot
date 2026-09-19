@@ -5,7 +5,19 @@ import 'package:light/src/core/functions/light.dart';
 
 import 'protocol.dart';
 
-enum RemoteConnection { disconnected, connecting, connected }
+enum ConnectionStatus {
+  disconnected('未连接'),
+  connecting('连接中'),
+  connected('已连接');
+
+  final String label;
+
+  const ConnectionStatus(this.label);
+
+  bool get isConnecting => this == connecting;
+
+  bool get isConnected => this == connected;
+}
 
 /// 一次业务操作的类别，随下发请求一起进入设备编解码器
 enum DeviceCommand implements WireEnum {
@@ -74,17 +86,10 @@ class DeviceStatePayload {
   factory DeviceStatePayload.fromJson(Map<String, Object?> json) {
     final raw = json[DeviceStateField.channels.wire];
     if (raw is! Map) {
-      throw RemoteCommandRejected(
-        '缺少 ${DeviceStateField.channels.wire} 字段',
-        code: GatewayErrorCode.invalidArgument,
-      );
+      throw RemoteCommandRejected('缺少 ${DeviceStateField.channels.wire} 字段', code: GatewayErrorCode.invalidArgument);
     }
-    int channel(LightChannel key) => _integerInRange(
-      raw[key.wire],
-      0,
-      100,
-      '${DeviceStateField.channels.wire}.${key.wire}',
-    );
+    int channel(LightChannel key) =>
+        _integerInRange(raw[key.wire], 0, 100, '${DeviceStateField.channels.wire}.${key.wire}');
     return DeviceStatePayload(
       channels: LightState(
         red: channel(LightChannel.red),
@@ -93,47 +98,27 @@ class DeviceStatePayload {
         white: channel(LightChannel.white),
         uv: channel(LightChannel.uv),
       ),
-      temperature: _integerInRange(
-        json[DeviceStateField.temperature.wire],
-        20,
-        80,
-        DeviceStateField.temperature.wire,
-      ),
+      temperature: _integerInRange(json[DeviceStateField.temperature.wire], 20, 80, DeviceStateField.temperature.wire),
       fanSpeed:
           FanSpeed.fromValue(
-            _integerInRange(
-              json[DeviceStateField.fanSpeed.wire],
-              1,
-              2,
-              DeviceStateField.fanSpeed.wire,
-            ),
+            _integerInRange(json[DeviceStateField.fanSpeed.wire], 1, 2, DeviceStateField.fanSpeed.wire),
           ) ??
           FanSpeed.low,
-      power: _boolean(
-        json[DeviceStateField.power.wire],
-        DeviceStateField.power.wire,
-      ),
-      outputLimit:
-          json[DeviceStateField.outputLimit.wire] as int? ?? 100,
+      power: _boolean(json[DeviceStateField.power.wire], DeviceStateField.power.wire),
+      outputLimit: json[DeviceStateField.outputLimit.wire] as int? ?? 100,
     );
   }
 
   static int _integerInRange(Object? value, int min, int max, String name) {
     if (value is! int || value < min || value > max) {
-      throw RemoteCommandRejected(
-        '$name 必须是 $min-$max 的整数',
-        code: GatewayErrorCode.invalidArgument,
-      );
+      throw RemoteCommandRejected('$name 必须是 $min-$max 的整数', code: GatewayErrorCode.invalidArgument);
     }
     return value;
   }
 
   static bool _boolean(Object? value, String name) {
     if (value is! bool) {
-      throw RemoteCommandRejected(
-        '$name 必须是布尔值',
-        code: GatewayErrorCode.invalidArgument,
-      );
+      throw RemoteCommandRejected('$name 必须是布尔值', code: GatewayErrorCode.invalidArgument);
     }
     return value;
   }
@@ -158,8 +143,7 @@ enum RemoteConfirmation implements WireEnum {
   @override
   final String wire;
 
-  static RemoteConfirmation? valueOf(Object? raw) =>
-      wireValueOf(values, raw);
+  static RemoteConfirmation? valueOf(Object? raw) => wireValueOf(values, raw);
 }
 
 /// 批量请求里的步骤标识
@@ -186,11 +170,7 @@ enum RemoteStep implements WireEnum {
 
 class RemoteCommandRejected extends StateError {
   RemoteCommandRejected(this.reason, {this.code})
-    : super(
-        code == null
-            ? '设备拒绝执行：$reason'
-            : '设备拒绝执行：$reason（${code.label}）',
-      );
+    : super(code == null ? '设备拒绝执行：$reason' : '设备拒绝执行：$reason（${code.label}）');
 
   final String reason;
   final GatewayErrorCode? code;
@@ -228,7 +208,7 @@ class ReportedLightState {
 
 class RemoteSnapshot {
   const RemoteSnapshot({
-    this.connection = RemoteConnection.disconnected,
+    this.connection = ConnectionStatus.disconnected,
     this.deviceOnline = false,
     this.lampConnected = false,
     this.state,
@@ -236,7 +216,7 @@ class RemoteSnapshot {
     this.message,
   });
 
-  final RemoteConnection connection;
+  final ConnectionStatus connection;
 
   /// 网关是否在线
   final bool deviceOnline;
@@ -247,15 +227,12 @@ class RemoteSnapshot {
   final DateTime? lastSeen;
   final String? message;
 
-  bool get canControl =>
-      connection == RemoteConnection.connected && deviceOnline && lampConnected;
+  bool get canControl => connection == ConnectionStatus.connected && deviceOnline && lampConnected;
 }
 
 class RemoteCommandResult {
-  const RemoteCommandResult({
-    required this.commandId,
-    required this.confirmation,
-  });
+  const RemoteCommandResult({required this.commandId, required this.confirmation});
+
   final String commandId;
   final RemoteConfirmation confirmation;
 }
@@ -308,10 +285,7 @@ abstract interface class RemoteDeviceCodec {
   String get remoteCharacteristic;
 
   /// 把一次业务操作编码成一组写步骤
-  List<RemoteWriteStep> buildRemoteSteps(
-    DeviceCommand command,
-    Map<String, Object?> payload,
-  );
+  List<RemoteWriteStep> buildRemoteSteps(DeviceCommand command, Map<String, Object?> payload);
 
   /// 解析一帧通知报文
   ///
@@ -329,10 +303,7 @@ abstract interface class RemoteDeviceSession {
   bool get ready;
 
   /// 按设备命令下发一次业务操作
-  Future<RemoteCommandResult> execute(
-    DeviceCommand command,
-    Map<String, Object?> payload,
-  );
+  Future<RemoteCommandResult> execute(DeviceCommand command, Map<String, Object?> payload);
 
   Future<void> dispose();
 }

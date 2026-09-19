@@ -96,6 +96,7 @@ class DeviceRegistryService {
       default:
         break;
     }
+    _publish();
     return data;
   }
 
@@ -204,10 +205,10 @@ class DeviceRegistryService {
     final state = _gateway.client.snapshot;
     _snapshot = RemoteSnapshot(
       connection: state.connected
-          ? RemoteConnection.connected
+          ? ConnectionStatus.connected
           : state.connection == GatewayStatus.connecting
-          ? RemoteConnection.connecting
-          : RemoteConnection.disconnected,
+          ? ConnectionStatus.connecting
+          : ConnectionStatus.disconnected,
       deviceOnline: state.gatewayOnline,
       lampConnected:
           state.connected &&

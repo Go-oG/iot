@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import '../../shared/app_widgets.dart';
+import '../../widgets/app_widgets.dart';
 import '../protocol/remote_protocol.dart';
 
 enum Priority {

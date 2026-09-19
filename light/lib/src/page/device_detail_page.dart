@@ -17,7 +17,7 @@ import '../core/protocol/protocol.dart';
 import '../core/remote_gateway.dart';
 import '../data/models.dart';
 import '../dialog/scene.dart';
-import '../shared/app_widgets.dart';
+import '../widgets/app_widgets.dart';
 
 /// 设备详情：只展示一台设备的控制面板，未选中时先把该设备设为控制对象
 class DeviceDetailPage extends StatefulWidget {
@@ -171,7 +171,7 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
                 padding: const EdgeInsets.symmetric(horizontal: 18),
                 child: SectionTitle(
                   '快捷配色',
-                  trailing: TextButton(onPressed: () => context.go('/profile'), child: const Text('管理配色')),
+                  trailing: TextButton(onPressed: () => context.push('/profile'), child: const Text('管理配色')),
                 ),
               ),
               if (controller.scenes.isEmpty)
@@ -367,7 +367,9 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
             ListTile(
               contentPadding: EdgeInsets.zero,
               leading: Icon(
-                runtime?[GatewayField.paused.wire] == true ? Icons.play_circle_outline_rounded : Icons.pause_circle_outline_rounded,
+                runtime?[GatewayField.paused.wire] == true
+                    ? Icons.play_circle_outline_rounded
+                    : Icons.pause_circle_outline_rounded,
                 color: AppColors.blue,
               ),
               title: Text(runtime?[GatewayField.paused.wire] == true ? '恢复自动连接' : '暂停自动连接'),
@@ -412,10 +414,9 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
 
   Future<void> _togglePause() {
     return _run(() async {
-      await registry.execute(
-        _paused ? GatewayManageAction.resume : GatewayManageAction.pause,
-        {GatewayField.device: widget.deviceId},
-      );
+      await registry.execute(_paused ? GatewayManageAction.resume : GatewayManageAction.pause, {
+        GatewayField.device: widget.deviceId,
+      });
       await _load();
     });
   }

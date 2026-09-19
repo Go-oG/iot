@@ -4,7 +4,7 @@ import 'package:light/src/core/functions/base.dart';
 import 'package:light/src/core/protocol/wire.dart';
 
 import '../../app/theme.dart';
-import '../../shared/device_control_widgets.dart';
+import '../../widgets/device_card.dart';
 
 enum FanSpeed implements WireEnum {
   low(0x01, 'low'),
@@ -48,7 +48,7 @@ class FanSpeedFunction extends ValueDeviceFunction<FanSpeed> {
   Widget buildWidget(
     BuildContext context,
     covariant Device<dynamic> device,
-    CardSize size,
+    CardSize size
   ) {
     final binding = control(context, device);
     final isHigh = binding.read() == FanSpeed.high;

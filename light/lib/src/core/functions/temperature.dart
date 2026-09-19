@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../app/theme.dart';
-import '../../shared/device_control_widgets.dart';
+import '../../widgets/device_card.dart';
 import '../device/device.dart';
 import 'base.dart';
 

@@ -13,7 +13,7 @@ import '../core/functions/timer.dart';
 import '../data/backup_service.dart';
 import '../data/device_configuration.dart';
 import '../dialog/device_function.dart';
-import '../shared/app_widgets.dart';
+import '../widgets/app_widgets.dart';
 
 class DeviceFunctionsPage extends StatefulWidget {
   const DeviceFunctionsPage({

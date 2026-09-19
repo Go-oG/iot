@@ -3,9 +3,9 @@ import 'package:go_router/go_router.dart';
 import 'package:light/src/app/shell.dart';
 import 'package:light/src/page/debug/device_debug_page.dart';
 import 'package:light/src/page/device_detail_page.dart';
-import 'package:light/src/page/devices_page.dart';
-import 'package:light/src/page/home_page.dart';
-import 'package:light/src/page/plans_page.dart';
+import 'package:light/src/page/home/devices_page.dart';
+import 'package:light/src/page/home/home_page.dart';
+import 'package:light/src/page/home/plans_page.dart';
 import 'package:light/src/page/profile_page.dart';
 
 import '../core/protocol/remote_protocol.dart';
@@ -19,6 +19,7 @@ GoRouter buildAppRouter() {
   return GoRouter(
     initialLocation: '/home',
     routes: [
+      GoRoute(path: '/profile', builder: (context, state) => const ProfilePage()),
       GoRoute(path: '/gateway-management', builder: (context, state) => const GatewayManagementPage()),
       GoRoute(path: '/mqtt-settings', builder: (context, state) => MqttSettingsPage()),
       GoRoute(
@@ -27,7 +28,7 @@ GoRouter buildAppRouter() {
           // 远程控制已连接时直接建立调试连接，避免两处状态不一致
           return MqttDebugPage(
             settings: AppScope.controller.remoteSettings,
-            autoConnect: AppScope.controller.remote.connection == RemoteConnection.connected,
+            autoConnect: AppScope.controller.remote.connection == ConnectionStatus.connected,
           );
         },
       ),
@@ -60,7 +61,6 @@ GoRouter buildAppRouter() {
           StatefulShellBranch(routes: [_route('/home', const HomePage())]),
           StatefulShellBranch(routes: [_route('/devices', const DevicesPage())]),
           StatefulShellBranch(routes: [_route('/plans', const PlansPage())]),
-          StatefulShellBranch(routes: [_route('/profile', const ProfilePage())]),
         ],
       ),
     ],

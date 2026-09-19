@@ -312,21 +312,9 @@ class AppController extends ChangeNotifier {
     try {
       remoteSettings = await _remoteStore.read();
       if (_disposed) return;
-      if (remoteSettings?.enabled == true) {
-        // 主控制链路同样需要息屏保持，否则系统挂起后 MQTT 心跳停止、控制全部失效
-        await KeepAliveService.start(
-          title: '设备控制已连接',
-          text: '正在保持与网关的连接，避免息屏后断开',
-        );
-        _registry.reset();
-        // 上次退出时选中的设备保存在远端配置里，连接前先恢复
-        final selected = remoteSettings!.bluetoothDeviceId;
-        _registry.select(selected.isEmpty ? null : selected);
-        await _remote.connect(remoteSettings!);
-        if (_disposed) return;
-        // 选中的设备可能需要重新建立会话
-        await _syncDeviceSession(_registry.selectedDeviceId);
-      }
+      notifyListeners();
+      final settings = remoteSettings;
+      if (settings != null) await _connectRemote(settings);
     } catch (_) {
       if (!_disposed) _publishMessage('远程配置读取失败，请在设备页重新配置');
     } finally {
@@ -342,6 +330,17 @@ class AppController extends ChangeNotifier {
     remoteSettings = settings;
     _editingLight = false;
     notifyListeners();
+    await _connectRemote(settings);
+  }
+
+  /// 启动和重新配置共用恢复流程，避免清空登记缓存后丢失控制对象
+  Future<void> _connectRemote(RemoteSettings settings) async {
+    _registry.reset();
+    final selected = settings.bluetoothDeviceId;
+    _registry.select(selected.isEmpty ? null : selected);
+    await _syncDeviceSession(_registry.selectedDeviceId);
+    if (_disposed) return;
+    notifyListeners();
     if (settings.enabled) {
       await KeepAliveService.start(
         title: '设备控制已连接',
@@ -350,14 +349,17 @@ class AppController extends ChangeNotifier {
     } else {
       await KeepAliveService.stop();
     }
-    _registry.reset();
+    if (_disposed) return;
     await _remote.connect(settings);
   }
 
   Future<void> clearRemoteSettings() async {
     if (applying) throw StateError('请等待当前命令完成');
     await _remoteStore.clear();
+    if (_disposed) return;
     remoteSettings = null;
+    _registry.reset();
+    await _syncDeviceSession(null);
     await KeepAliveService.stop();
     await _remote.disconnect();
     if (!_disposed) notifyListeners();
