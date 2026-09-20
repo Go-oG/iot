@@ -108,6 +108,31 @@ class GatewayEvent {
   Map<String, Object?>? get data => message.data;
 }
 
+/// 来自主动快照的设备通知序号基线，不依赖网关时钟是否同步
+class GatewayReportCursor {
+  const GatewayReportCursor(this.bootId, this.sequence);
+  final String bootId;
+  final int sequence;
+}
+
+class _PendingRequest {
+  _PendingRequest(this.request, this.completer);
+
+  final GatewayMessage request;
+  final Completer<GatewayMessage> completer;
+
+  bool matches(GatewayMessage response) =>
+      request.op == response.op &&
+      request.deviceId == response.deviceId &&
+      _sameUuid(request.service, response.service) &&
+      _sameUuid(request.characteristic, response.characteristic);
+
+  static bool _sameUuid(String? expected, String? actual) =>
+      expected == null || actual == null
+      ? expected == actual
+      : GatewayUuid.normalize(expected) == GatewayUuid.normalize(actual);
+}
+
 /// App 侧的 MQTT 网关客户端，负责帧编解码、请求关联、去重、状态缓存与在线状态
 ///
 /// 只处理协议层，不包含任何灯具业务语义，业务由上层解析 notify 与特征值
@@ -146,7 +171,9 @@ class GatewayClient {
   final Random _random = Random();
   final String clientId =
       'app-${List.generate(8, (_) => Random.secure().nextInt(256).toRadixString(16).padLeft(2, '0')).join()}';
-  final Map<String, Completer<GatewayMessage>> _pending = {};
+  final Map<String, _PendingRequest> _pending = {};
+  final Map<String, GatewayReportCursor> _reportCursors = {};
+  GatewayReportCursor? reportCursor(String deviceId) => _reportCursors[deviceId];
   late final StreamSubscription<MqttEnvelope> _messageSubscription;
   late final StreamSubscription<bool> _connectionSubscription;
   GatewayClientSnapshot _snapshot = const GatewayClientSnapshot();
@@ -230,6 +257,7 @@ class GatewayClient {
       );
       unawaited(_refreshQuietly());
     } else {
+      _reportCursors.clear();
       _failPending('连接中断，执行结果未确认');
       _emit(const GatewayClientSnapshot());
       _scheduleReconnect();
@@ -350,7 +378,7 @@ class GatewayClient {
       }
       final completer = Completer<GatewayMessage>();
       completer.future.ignore();
-      _pending[reqId] = completer;
+      _pending[reqId] = _PendingRequest(message, completer);
       completers[reqId] = completer;
     }
     final frame = GatewayFrame(
@@ -382,8 +410,10 @@ class GatewayClient {
           ),
       ]);
     } finally {
-      for (final reqId in completers.keys) {
-        _pending.remove(reqId);
+      for (final entry in completers.entries) {
+        if (identical(_pending[entry.key]?.completer, entry.value)) {
+          _pending.remove(entry.key);
+        }
       }
     }
   }
@@ -428,6 +458,7 @@ class GatewayClient {
           ? DateTime.fromMillisecondsSinceEpoch(ts, isUtc: true)
           : null;
       if (!online) {
+        _reportCursors.clear();
         // 遗嘱消息是保留消息，收到即表示网关已经掉线
         _failPending('网关离线，执行结果未确认');
         _emit(GatewayClientSnapshot(connection: _snapshot.connection));
@@ -451,23 +482,29 @@ class GatewayClient {
     if (reqId == null) return;
     final pending = _pending[reqId];
     // 迟到的重复响应不再参与任何请求，对应协议第 28 节的去重要求
-    if (pending == null || pending.isCompleted) return;
+    if (pending == null || pending.completer.isCompleted) return;
+    // 响应必须回显原请求的操作与目标，避免错误报文污染状态或完成其它命令
+    if (!pending.matches(message)) return;
     final frameLimit = message.data?[GatewayField.maxFrameBytes.wire];
     _emit(
       _snapshot,
       gatewayOnline: true,
       lastSeen: _now(),
       capabilities: frameLimit is int
-          ? {...?_snapshot.capabilities, GatewayField.maxFrameBytes.wire: frameLimit}
+          ? {
+              ...?_snapshot.capabilities,
+              GatewayField.maxFrameBytes.wire: frameLimit,
+            }
           : null,
     );
     if (message.op == GatewayOption.read && message.error == null) {
       _applyNotifyEvent(GatewayEvent(message));
     }
-    pending.complete(message);
+    pending.completer.complete(message);
   }
 
   void _onEvent(GatewayEvent event) {
+    if (event.op == GatewayOption.hello) _reportCursors.clear();
     if (event.op == GatewayOption.hello || event.op == GatewayOption.overflow) {
       _requestSnapshotIfIdle();
     }
@@ -553,6 +590,15 @@ class GatewayClient {
   }
 
   void _applySnapshot(Map<String, Object?> data) {
+    _reportCursors.clear();
+    final bootId = data['bootId'];
+    if (bootId is String && bootId.isNotEmpty) {
+      for (final device in data[GatewayField.devices.wire] as List? ?? const []) {
+        if (device is Map && device['deviceId'] is String && device['reportSeq'] is int && device['reportSeq'] >= 0) {
+          _reportCursors[device['deviceId'] as String] = GatewayReportCursor(bootId, device['reportSeq'] as int);
+        }
+      }
+    }
     final devices = <String, GatewayDeviceState>{};
     _mergeDevices(devices, data[GatewayField.devices.wire], full: true);
     final revision = data[GatewayField.revision.wire];
@@ -614,7 +660,8 @@ class GatewayClient {
         deviceId: deviceId,
         mac: entry[GatewayField.mac.wire] as String? ?? previous.mac,
         name: entry[GatewayField.name.wire] as String? ?? previous.name,
-        addrType: entry[GatewayField.addrType.wire] as String? ?? previous.addrType,
+        addrType:
+            entry[GatewayField.addrType.wire] as String? ?? previous.addrType,
         connection: connection ?? previous.connection,
         rssi: rssi is int ? rssi : previous.rssi,
         lastSeen: lastSeen is int ? lastSeen : previous.lastSeen,
@@ -635,7 +682,9 @@ class GatewayClient {
 
   void _failPending(String message) {
     for (final pending in _pending.values) {
-      if (!pending.isCompleted) pending.completeError(StateError(message));
+      if (!pending.completer.isCompleted) {
+        pending.completer.completeError(StateError(message));
+      }
     }
     _pending.clear();
   }
@@ -665,6 +714,7 @@ class GatewayClient {
 
   /// 关闭 App 会话不影响网关管理的设备连接
   Future<void> disconnect() async {
+    _reportCursors.clear();
     _generation++;
     _settings = null;
     _connecting = false;

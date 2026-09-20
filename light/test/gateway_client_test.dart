@@ -1,11 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:light/src/core/device/impl/at5_device.dart';
 import 'package:light/src/core/device_registry.dart';
 import 'package:light/src/core/protocol/client.dart';
 import 'package:light/src/core/protocol/mqtt_service.dart';
 import 'package:light/src/core/protocol/protocol.dart';
-import 'package:light/src/core/protocol/remote_protocol.dart';
-import 'package:light/src/core/remote/device_session.dart';
 import 'package:light/src/core/remote_gateway.dart';
 import 'package:light/src/data/remote_settings.dart';
 
@@ -122,6 +119,7 @@ void main() {
     final response = <String, Object?>{
       'type': 'res',
       'op': 'read',
+      'deviceId': 'lamp',
       'reqId': req['reqId'],
       'code': 0,
     };
@@ -162,47 +160,132 @@ void main() {
     await client.dispose();
   });
 
-  test('AT5 控制不发送 waitNotify，写入成功不冒充设备回读', () async {
-    final mqtt = FakeMqtt()
-      ..state = {
-        'revision': 1,
-        'devices': [
-          {'deviceId': 'lamp', 'connection': 'connected'},
-        ],
-      };
+  test('响应必须匹配操作设备和特征，UUID 等价格式可以关联', () async {
+    final mqtt = FakeMqtt();
+    final client = GatewayClient(transport: mqtt);
+    addTearDown(client.dispose);
+    await client.connect(settings);
+    await flush();
+    mqtt.reply = false;
+    final future = client.request(
+      GatewayOption.read,
+      deviceId: 'lamp',
+      service: 'fff0',
+      characteristic: 'fff1',
+    );
+    final request = (mqtt.sent.last['messages'] as List).single as Map;
+    final response = <String, Object?>{
+      'type': 'res',
+      'reqId': request['reqId'],
+      'op': 'read',
+      'code': 0,
+      'deviceId': 'lamp',
+      'service': 'fff0',
+      'char': 'fff1',
+      'value': '01',
+    };
+    var completed = false;
+    future.then((_) => completed = true);
+    for (final override in [
+      {'op': 'write'},
+      {'deviceId': 'other'},
+      {'deviceId': null},
+      {'service': 'fff9'},
+      {'char': 'fff9'},
+      {'char': null},
+    ]) {
+      mqtt.send([
+        {...response, ...override},
+      ], clientId: client.clientId);
+      await flush();
+      expect(completed, isFalse);
+      expect(client.device('lamp'), isNull);
+    }
+    mqtt.send([
+      {...response, 'service': '0000FFF0-0000-1000-8000-00805F9B34FB'},
+    ], clientId: client.clientId);
+    expect((await future).value, '01');
+    expect(client.device('lamp')!.value('fff0', 'fff1')!.value, '01');
+  });
+
+  test('重置扫描后迟到的启动响应不能覆盖新扫描', () async {
+    final mqtt = FakeMqtt();
     final gateway = RemoteGateway(client: GatewayClient(transport: mqtt));
+    final registry = DeviceRegistryService(gateway: gateway);
+    addTearDown(() async {
+      await registry.dispose();
+      await gateway.dispose();
+    });
     await gateway.connect(settings);
     await flush();
-    final codec = At5Client();
-    addTearDown(codec.dispose);
-    final session = DeviceRemoteSession(
-      gateway: gateway,
-      codec: codec,
-      deviceId: 'lamp',
-    );
-    expect(session.ready, true);
-    final result = await session.execute(DeviceCommand.setState, {
-      'channels': {'red': 10, 'green': 20, 'blue': 30, 'white': 40, 'uv': 0},
-      'temperature': 30,
-      'fanSpeed': 1,
-      'power': true,
+    mqtt.reply = false;
+    final oldScan = registry.startScan();
+    final oldRequest = (mqtt.sent.last['messages'] as List).single as Map;
+    registry.reset();
+    final newScan = registry.startScan();
+    final newRequest = (mqtt.sent.last['messages'] as List).single as Map;
+    void respond(Map request, String scanId) => mqtt.send([
+      {
+        'type': 'res',
+        'op': 'scan',
+        'reqId': request['reqId'],
+        'code': 0,
+        'data': {'scanId': scanId},
+      },
+    ], clientId: gateway.client.clientId);
+    respond(newRequest, 'new');
+    await newScan;
+    respond(oldRequest, 'old');
+    await oldScan;
+    for (final id in ['old', 'new']) {
+      mqtt.send([
+        {
+          'type': 'event',
+          'op': 'scan',
+          'data': {
+            'scanId': id,
+            'devices': [
+              {'deviceId': id},
+            ],
+          },
+        },
+      ]);
+    }
+    await flush();
+    expect(registry.scanning, isTrue);
+    expect(registry.nearby.keys, ['new']);
+  });
+
+  test('网关离线结束扫描，恢复后不接收旧扫描结果', () async {
+    final mqtt = FakeMqtt();
+    final gateway = RemoteGateway(client: GatewayClient(transport: mqtt));
+    final registry = DeviceRegistryService(gateway: gateway);
+    addTearDown(() async {
+      await registry.dispose();
+      await gateway.dispose();
     });
-    final batch = (mqtt.sent.last['messages'] as List).first;
-    expect((batch['data']['steps'] as List).map((s) => s['op']), [
-      'subscribe',
-      'write',
-      'write',
-      'write',
+    await gateway.connect(settings);
+    await flush();
+    await registry.startScan();
+    mqtt.incoming.add(
+      const MqttEnvelope('iot/v1/gw/presence', '{"online":false}'),
+    );
+    await flush();
+    expect(registry.scanning, isFalse);
+    mqtt.send([
+      {
+        'type': 'event',
+        'op': 'scan',
+        'data': {
+          'scanId': 'scan-1',
+          'devices': [
+            {'deviceId': 'old'},
+          ],
+        },
+      },
     ]);
-    expect((batch['data']['steps'] as List).map((s) => s['id']), [
-      'sub',
-      'brightness',
-      'temperatureFan',
-      'power',
-    ]);
-    expect(result.confirmation, RemoteConfirmation.written);
-    await session.dispose();
-    await gateway.dispose();
+    await flush();
+    expect(registry.nearby, isEmpty);
   });
 
   test('设备管理服务负责登记、扫描与附近设备，通道路由它收发', () async {
@@ -266,88 +349,4 @@ void main() {
     await gateway.dispose();
   });
 
-  test('会话从转发的通知里解码设备确认，网关不参与解析', () async {
-    final mqtt = FakeMqtt()
-      ..state = {
-        'revision': 1,
-        'devices': [
-          {'deviceId': 'lamp', 'connection': 'connected'},
-        ],
-      };
-    final gateway = RemoteGateway(client: GatewayClient(transport: mqtt));
-    await gateway.connect(settings);
-    await flush();
-    final codec = At5Client();
-    addTearDown(codec.dispose);
-    final session = DeviceRemoteSession(
-      gateway: gateway,
-      codec: codec,
-      deviceId: 'lamp',
-    );
-    // 设备对 CMD 0x05 的成功确认：响应帧头 + 命令 + 00 + 长度 + ACK + CRC
-    final ack = [
-      ...At5Client.responseHeader,
-      At5Client.commandPower,
-      0x00,
-      0x01,
-      0x00,
-    ];
-    final crc = At5Client.crc16Modbus(ack);
-    mqtt.notifyOnWrite = [...ack, (crc >> 8) & 0xFF, crc & 0xFF];
-
-    final result = await session.execute(DeviceCommand.setState, {
-      'channels': {'red': 1, 'green': 1, 'blue': 1, 'white': 1, 'uv': 0},
-      'temperature': 30,
-      'fanSpeed': 1,
-      'power': true,
-    });
-    expect(result.confirmation, RemoteConfirmation.deviceAck);
-
-    mqtt.notifyOnWrite = null;
-    await session.dispose();
-    await gateway.dispose();
-  });
-
-  test('设备回报失败确认时会话抛出拒绝', () async {
-    final mqtt = FakeMqtt()
-      ..state = {
-        'revision': 1,
-        'devices': [
-          {'deviceId': 'lamp', 'connection': 'connected'},
-        ],
-      };
-    final gateway = RemoteGateway(client: GatewayClient(transport: mqtt));
-    await gateway.connect(settings);
-    await flush();
-    final codec = At5Client();
-    addTearDown(codec.dispose);
-    final session = DeviceRemoteSession(
-      gateway: gateway,
-      codec: codec,
-      deviceId: 'lamp',
-    );
-    // CMD 0x05 返回非 0 状态码表示设备没有接受
-    final reject = [
-      ...At5Client.responseHeader,
-      At5Client.commandPower,
-      0x00,
-      0x01,
-      0x01,
-    ];
-    final crc = At5Client.crc16Modbus(reject);
-    mqtt.notifyOnWrite = [...reject, (crc >> 8) & 0xFF, crc & 0xFF];
-
-    await expectLater(
-      session.execute(DeviceCommand.setState, {
-        'channels': {'red': 1, 'green': 1, 'blue': 1, 'white': 1, 'uv': 0},
-        'temperature': 30,
-        'fanSpeed': 1,
-        'power': true,
-      }),
-      throwsA(isA<RemoteCommandRejected>()),
-    );
-    mqtt.notifyOnWrite = null;
-    await session.dispose();
-    await gateway.dispose();
-  });
 }

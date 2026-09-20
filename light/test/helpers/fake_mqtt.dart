@@ -52,6 +52,8 @@ class FakeMqtt extends MqttService {
           'op': req['op'],
           'code': 0,
           if (req['deviceId'] != null) 'deviceId': req['deviceId'],
+          'service': ?req['service'],
+          'char': ?req['char'],
           'data': req['op'] == 'snapshot'
               ? state
               : req['op'] == 'manage' && req['data']['action'] == 'status'

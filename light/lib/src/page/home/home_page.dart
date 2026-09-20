@@ -6,9 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../../app/controller.dart';
 import '../../app/scope.dart';
 import '../../app/theme.dart';
-import '../../core/device/impl/generic_device.dart';
 import '../../core/device_registry.dart';
-import '../../core/functions/light.dart';
 import '../../core/protocol/client.dart';
 import '../../core/protocol/protocol.dart';
 import '../../core/remote_gateway.dart';
@@ -17,7 +15,7 @@ import '../../data/models.dart';
 import '../../widgets/app_widgets.dart';
 import '../../widgets/remote_card.dart';
 
-/// 首页：用两列卡片展示全部设备
+/// 首页：用自适应网格展示全部设备
 /// 卡片上可以直接开关灯，其余操作在设备详情页完成
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -85,10 +83,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _toggle(_HomeDevice item) async {
     final controller = AppScope.controller;
     await _run(() async {
-      if (controller.selectedDeviceId != item.id) {
-        await controller.selectDevice(item.id, item.name, model: item.model);
-      }
-      await controller.togglePower();
+      await controller.togglePowerFor(item.id);
     });
   }
 
@@ -110,6 +105,10 @@ class _HomePageState extends State<HomePage> {
       if (item.selected) selectedId = id;
       items.add(item);
     }
+    for (final config in controller.deviceConfigurations) {
+      if (listed.add(config.id))
+        items.add(_describe(controller, remote, id: config.id));
+    }
     // 当前控制的设备排在最前，与米家的默认设备一致
     if (selectedId != null) {
       final index = items.indexWhere((item) => item.id == selectedId);
@@ -118,39 +117,55 @@ class _HomePageState extends State<HomePage> {
     return items;
   }
 
-  _HomeDevice _describe(AppController controller, RemoteGateway remote, {required String id, SavedDevice? saved}) {
+  _HomeDevice _describe(
+    AppController controller,
+    RemoteGateway remote, {
+    required String id,
+    SavedDevice? saved,
+  }) {
     final registry = controller.deviceRegistry;
     final state = remote.client.device(id);
     final registration = registry.registered[id];
     final entry = registry.stateOf(id);
-    final connected = state?.connected == true && registry.snapshot.deviceOnline;
-    final mode = GatewayDeviceMode.valueOf(registration?[GatewayField.mode.wire]);
-    final configuration = controller.deviceConfigurations.where((item) => item.id == id).firstOrNull;
-    final savedDevice = saved ?? controller.savedDevices.where((item) => item.id == id).firstOrNull;
-    final supportsLight = _supportsLight(savedDevice, configuration);
-    final name = _nameOf(controller, id, savedDevice, configuration, registration);
+    final connected =
+        state?.connected == true && registry.snapshot.deviceOnline;
+    final mode = GatewayDeviceMode.valueOf(
+      registration?[GatewayField.mode.wire],
+    );
+    final configuration = controller.deviceConfigurations
+        .where((item) => item.id == id)
+        .firstOrNull;
+    final savedDevice =
+        saved ??
+        controller.savedDevices.where((item) => item.id == id).firstOrNull;
+    final supportsLight = _supportsLight(configuration);
+    final name = _nameOf(
+      controller,
+      id,
+      savedDevice,
+      configuration,
+      registration,
+    );
     return _HomeDevice(
       id: id,
       name: name,
       selected: controller.selectedDeviceId == id,
       connected: connected,
       supportsLight: supportsLight,
-      model: configuration != null
-          ? DeviceModel.generic
-          : savedDevice?.model ??
-                (mode?.isGeneric == true ? DeviceModel.generic : DeviceModel.at5),
-      powerOn: controller.powerEnabled,
+      powerOn: controller.reportedPowerFor(id),
       detail: _detail(
         controller,
         entry,
         selected: controller.selectedDeviceId == id,
         connected: connected,
         configuration: configuration,
+        deviceId: id,
       ),
       // 协议接管的设备由网关维护连接，广播设备没有单独通道
       canToggle:
           connected &&
-          !controller.applying &&
+          controller.reportedPowerFor(id) != null &&
+          !controller.devicesBusy &&
           mode?.isBroadcast != true &&
           registration?[GatewayField.protocolOwned.wire] != true,
     );
@@ -175,14 +190,9 @@ class _HomePageState extends State<HomePage> {
     return id;
   }
 
-  bool _supportsLight(SavedDevice? saved, DeviceConfiguration? configuration) {
-    if (configuration == null) return saved?.model != DeviceModel.generic;
-    final device = GenericDevice.fromJson(configuration.toJson());
-    try {
-      return device.supportFunctions.any((function) => function is LightFunction);
-    } finally {
-      device.dispose();
-    }
+  bool _supportsLight(DeviceConfiguration? configuration) {
+    if (configuration == null) return false;
+    return false;
   }
 
   /// 卡片副标题：当前控制的设备展示亮度，其它设备展示网关运行状态
@@ -192,16 +202,15 @@ class _HomePageState extends State<HomePage> {
     required bool selected,
     required bool connected,
     required DeviceConfiguration? configuration,
+    required String deviceId,
   }) {
     if (!connected) {
-      return GatewayStatus.valueOf(entry?[GatewayField.state.wire])?.label ?? '未连接';
+      return GatewayStatus.valueOf(entry?[GatewayField.state.wire])?.label ??
+          '未连接';
     }
-    if (selected) {
-      if (!controller.powerEnabled) return '已关闭';
-      return '亮度 ${controller.brightness}%';
-    }
-    if (configuration != null) return '${configuration.functions.length} 个功能模块';
-    return '已连接';
+    if (configuration != null)
+      return '${configuration.model.properties.length} 个属性';
+    return '已连接 · 状态待回读';
   }
 
   @override
@@ -210,7 +219,8 @@ class _HomePageState extends State<HomePage> {
     final remote = controller.mqttGateway;
     final items = _items(controller, remote);
     final online = controller.deviceRegistry.snapshot.deviceOnline;
-    final ready = remote.client.connected && online && !_busy && !controller.applying;
+    final ready =
+        remote.client.connected && online && !_busy && !controller.devicesBusy;
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
@@ -223,7 +233,11 @@ class _HomePageState extends State<HomePage> {
                 : remote.client.connected
                 ? '网关离线，正在等待上线'
                 : 'MQTT 未连接',
-            action: AppIconButton(icon: Icons.refresh_rounded, tooltip: '同步网关', onPressed: ready ? _load : null),
+            action: AppIconButton(
+              icon: Icons.refresh_rounded,
+              tooltip: '同步网关',
+              onPressed: ready ? _load : null,
+            ),
           ),
           const RemoteControlCard(),
           const SizedBox(height: 16),
@@ -231,28 +245,49 @@ class _HomePageState extends State<HomePage> {
             padding: const EdgeInsets.symmetric(horizontal: 18),
             child: SectionTitle(
               '全部设备',
-              trailing: TextButton(onPressed: () => context.go('/devices'), child: const Text('管理设备')),
+              trailing: TextButton(
+                onPressed: () => context.go('/devices'),
+                child: const Text('管理设备'),
+              ),
             ),
           ),
           if (_busy) const LinearProgressIndicator(),
           if (items.isEmpty)
             const Padding(
               padding: EdgeInsets.fromLTRB(18, 18, 18, 30),
-              child: Text('还没有设备，到“设备”页扫描网关附近的 BLE 设备并登记', style: TextStyle(color: AppColors.muted)),
+              child: Text(
+                '还没有设备，到“设备”页扫描网关附近的 BLE 设备并登记',
+                style: TextStyle(color: AppColors.muted),
+              ),
             )
           else
-            GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                mainAxisSpacing: 12,
-                crossAxisSpacing: 12,
-                childAspectRatio: 0.92,
-              ),
-              itemCount: items.length,
-              itemBuilder: (context, index) => _DeviceCard(item: items[index], onToggle: () => _toggle(items[index])),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final textScaler = MediaQuery.textScalerOf(context);
+                final minWidth = 156 + (textScaler.scale(15) - 15) * 4;
+                final columns = ((constraints.maxWidth - 20) / (minWidth + 12))
+                    .floor()
+                    .clamp(1, 6);
+                return GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: columns,
+                    mainAxisSpacing: 12,
+                    crossAxisSpacing: 12,
+                    mainAxisExtent:
+                        146 +
+                        textScaler.scale(15) * 2.6 +
+                        textScaler.scale(12) * 2.8,
+                  ),
+                  itemCount: items.length,
+                  itemBuilder: (context, index) => _DeviceCard(
+                    item: items[index],
+                    onToggle: () => _toggle(items[index]),
+                  ),
+                );
+              },
             ),
         ],
       ),
@@ -268,66 +303,139 @@ class _DeviceCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SurfaceCard(
-      padding: const EdgeInsets.fromLTRB(14, 12, 10, 10),
-      borderColor: item.selected ? AppColors.blue : null,
+    final accent = item.connected ? AppColors.blue : AppColors.muted;
+    return Material(
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: BorderSide(
+          color: item.selected ? AppColors.blue : AppColors.line,
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: () => context.push('/device/${Uri.encodeComponent(item.id)}'),
-        borderRadius: BorderRadius.circular(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                StatusPill(
-                  label: item.connected ? '在线' : '离线',
-                  color: item.connected ? AppColors.green : AppColors.muted,
-                  icon: item.connected ? Icons.link_rounded : Icons.link_off_rounded,
-                ),
-                const Spacer(),
-                if (item.selected) const StatusPill(label: '控制中', color: AppColors.blue),
-              ],
-            ),
-            const Spacer(),
-            Row(
-              children: [
-                Expanded(
-                  child: Icon(
-                    item.supportsLight ? Icons.lightbulb_outline_rounded : Icons.devices_other_rounded,
-                    size: 28,
-                    color: item.connected ? AppColors.blue : AppColors.muted,
-                  ),
-                ),
-                if (item.supportsLight)
-                  IconButton(
-                    onPressed: item.canToggle ? onToggle : null,
-                    visualDensity: VisualDensity.compact,
-                    tooltip: item.powerOn ? '关闭灯光' : '打开灯光',
-                    icon: Icon(
-                      Icons.power_settings_new_rounded,
-                      size: 22,
-                      color: item.canToggle
-                          ? (item.powerOn ? AppColors.blue : AppColors.muted)
-                          : AppColors.muted.withValues(alpha: 0.4),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: accent.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Icon(
+                      item.supportsLight
+                          ? Icons.lightbulb_outline_rounded
+                          : Icons.devices_other_rounded,
+                      size: 25,
+                      color: accent,
                     ),
                   ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              item.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, height: 1.2),
-            ),
-            const SizedBox(height: 3),
-            Text(
-              item.detail,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 12, color: AppColors.muted),
-            ),
-          ],
+                  if (item.supportsLight)
+                    IconButton(
+                      onPressed: item.canToggle ? onToggle : null,
+                      tooltip: item.powerOn == null
+                          ? '状态待回读'
+                          : item.powerOn!
+                          ? '关闭灯光'
+                          : '打开灯光',
+                      style: IconButton.styleFrom(
+                        minimumSize: const Size(48, 48),
+                        backgroundColor: item.canToggle && item.powerOn == true
+                            ? AppColors.paleBlue
+                            : AppColors.canvas,
+                        foregroundColor: item.powerOn == true
+                            ? AppColors.blue
+                            : AppColors.muted,
+                        disabledForegroundColor: AppColors.muted.withValues(
+                          alpha: 0.4,
+                        ),
+                      ),
+                      icon: const Icon(
+                        Icons.power_settings_new_rounded,
+                        size: 22,
+                      ),
+                    )
+                  else
+                    const SizedBox(height: 48),
+                ],
+              ),
+              const SizedBox(height: 14),
+              SizedBox(
+                height: MediaQuery.textScalerOf(context).scale(15) * 2.6,
+                child: Text(
+                  item.name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    height: 1.3,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Container(
+                    width: 6,
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: item.connected ? AppColors.green : AppColors.grey,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      '${item.connected ? '在线' : '离线'} · ${item.detail}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        height: 1.4,
+                        color: AppColors.muted,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const Spacer(),
+              const Divider(),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      item.selected ? '当前控制' : '查看设备',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        height: 1.4,
+                        fontWeight: item.selected
+                            ? FontWeight.w600
+                            : FontWeight.w400,
+                        color: item.selected ? AppColors.blue : AppColors.muted,
+                      ),
+                    ),
+                  ),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    size: 18,
+                    color: item.selected ? AppColors.blue : AppColors.muted,
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -341,7 +449,6 @@ class _HomeDevice {
     required this.selected,
     required this.connected,
     required this.supportsLight,
-    required this.model,
     required this.powerOn,
     required this.detail,
     required this.canToggle,
@@ -352,8 +459,7 @@ class _HomeDevice {
   final bool selected;
   final bool connected;
   final bool supportsLight;
-  final DeviceModel model;
-  final bool powerOn;
+  final bool? powerOn;
   final String detail;
   final bool canToggle;
 }

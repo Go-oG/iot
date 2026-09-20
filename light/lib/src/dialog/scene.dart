@@ -1,22 +1,26 @@
 import 'package:flutter/material.dart';
-import 'package:light/src/core/functions/light.dart';
 
 import '../app/theme.dart';
+import '../core/device/device_model_catalog.dart';
+import '../core/device_model.dart';
 import '../data/color_presets.dart';
 import '../data/models.dart';
 
+/// 编辑一组配色：控件按设备模型的颜色属性生成，保存的是属性值
 Future<ScenePreset?> showSceneEditor(
   BuildContext context, {
   required String newId,
   ScenePreset? scene,
-  LightState? initialState,
+  DeviceModel? model,
+  Map<String, Object?>? initialProperties,
 }) {
   return showDialog<ScenePreset>(
     context: context,
     builder: (context) => _SceneEditorDialog(
       newId: newId,
       scene: scene,
-      initialState: initialState,
+      model: model,
+      initialProperties: initialProperties,
     ),
   );
 }
@@ -25,12 +29,18 @@ class _SceneEditorDialog extends StatefulWidget {
   const _SceneEditorDialog({
     required this.newId,
     this.scene,
-    this.initialState,
+    this.model,
+    this.initialProperties,
   });
 
   final String newId;
   final ScenePreset? scene;
-  final LightState? initialState;
+
+  /// 目标设备的模型定义，缺省时按内置 AT5 处理
+  final DeviceModel? model;
+
+  /// 用当前灯光数值新建配色时传入的属性值
+  final Map<String, Object?>? initialProperties;
 
   @override
   State<_SceneEditorDialog> createState() => _SceneEditorDialogState();
@@ -48,21 +58,33 @@ class _SceneEditorDialogState extends State<_SceneEditorDialog> {
 
   late final TextEditingController _nameController;
   late final TextEditingController _subtitleController;
+  late final DeviceModel _model;
+  late final String? _colorProperty;
+  late final String? _powerProperty;
+  late final Map<String, Object?> _baseProperties;
+  final Map<String, int> _channels = {};
   String? _nameError;
   late int _accentValue;
-  late LightState _state;
 
   @override
   void initState() {
     super.initState();
+    _model = widget.model ?? DeviceModelCatalog.instance.defaultModel;
+    _colorProperty = _findColorProperty();
+    _powerProperty = _findPowerProperty();
     final scene = widget.scene;
     _nameController = TextEditingController(text: scene?.name ?? '新配色');
     _subtitleController = TextEditingController(
       text: scene?.subtitle ?? '自定义鱼缸灯配色',
     );
     _accentValue = scene?.accentValue ?? _accentColors.first;
-    _state =
-        widget.initialState ?? scene?.state ?? aquariumColorPresets.first.state;
+    final source = scene?.properties ?? widget.initialProperties ?? const {};
+    _baseProperties = {
+      for (final entry in source.entries)
+        if (_model.properties[entry.key]?.canWrite ?? false)
+          entry.key: entry.value,
+    };
+    _channels.addAll(_initialChannels(source));
   }
 
   @override
@@ -72,8 +94,63 @@ class _SceneEditorDialogState extends State<_SceneEditorDialog> {
     super.dispose();
   }
 
+  /// 颜色属性：优先取声明了 color 渲染器的对象属性
+  String? _findColorProperty() {
+    for (final entry in _model.properties.entries) {
+      if (entry.value.ui?.renderer == UiRenderer.color &&
+          entry.value.canWrite) {
+        return entry.key;
+      }
+    }
+    for (final entry in _model.properties.entries) {
+      if (entry.value.value.type == ValueType.object && entry.value.canWrite) {
+        return entry.key;
+      }
+    }
+    return null;
+  }
+
+  /// 电源属性：声明了 toggle 渲染器的布尔属性
+  String? _findPowerProperty() {
+    for (final entry in _model.properties.entries) {
+      if (entry.value.ui?.renderer == UiRenderer.toggle &&
+          entry.value.value.type == ValueType.boolean &&
+          entry.value.canWrite) {
+        return entry.key;
+      }
+    }
+    return null;
+  }
+
+  Map<String, int> _initialChannels(Map<String, Object?> source) {
+    final color = _colorProperty;
+    if (color == null) return {};
+    final spec = _model.properties[color]!.value;
+    final value = source[color];
+    final channels = value is Map ? value : const <Object?, Object?>{};
+    final template = aquariumColorPresets.first.channels;
+    return {
+      for (final entry in spec.properties.entries)
+        entry.key: _clamp(
+          channels[entry.key] is num
+              ? (channels[entry.key] as num).round()
+              : template[entry.key] ?? _min(entry.value),
+          entry.value,
+        ),
+    };
+  }
+
+  static int _min(ValueSpec spec) => (spec.constraints?.min ?? 0).round();
+
+  static int _max(ValueSpec spec) => (spec.constraints?.max ?? 100).round();
+
+  static int _clamp(int value, ValueSpec spec) =>
+      value.clamp(_min(spec), _max(spec));
+
   @override
   Widget build(BuildContext context) {
+    final color = _colorProperty;
+    final spec = color == null ? null : _model.properties[color]!.value;
     return AlertDialog(
       title: Text(widget.scene == null ? '新建配色' : '编辑配色'),
       content: SizedBox(
@@ -118,60 +195,43 @@ class _SceneEditorDialogState extends State<_SceneEditorDialog> {
                     ActionChip(
                       label: Text(preset.name),
                       onPressed: () => setState(() {
-                        _state = preset.state;
+                        _channels.addAll({
+                          for (final entry in preset.channels.entries)
+                            if (spec?.properties.containsKey(entry.key) ??
+                                false)
+                              entry.key: entry.value,
+                        });
                         _accentValue = preset.accentValue;
                       }),
                     ),
                 ],
               ),
               const SizedBox(height: 8),
-              const Text(
-                '选择模板后可继续微调各通道，保存后点击配色即可应用',
-                style: TextStyle(color: AppColors.muted, fontSize: 12),
+              Text(
+                color == null
+                    ? '设备模型 ${_model.id} 没有可写的颜色属性，只能保存名称与标识颜色'
+                    : '调整${_model.properties[color]!.name}各通道，保存后点击配色即可下发',
+                style: const TextStyle(color: AppColors.muted, fontSize: 12),
               ),
-              const SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  '通道平均亮度 ${_state.powerPercent}%',
-                  style: const TextStyle(fontWeight: FontWeight.w700),
+              if (spec != null) ...[
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '通道平均值 ${_average()}',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
                 ),
-              ),
-              _LabeledSlider(
-                label: '红光',
-                value: _state.red,
-                color: const Color(0xFFFF3131),
-                onChanged: (value) =>
-                    setState(() => _state = _state.copyWith(red: value)),
-              ),
-              _LabeledSlider(
-                label: '绿光',
-                value: _state.green,
-                color: const Color(0xFF00C765),
-                onChanged: (value) =>
-                    setState(() => _state = _state.copyWith(green: value)),
-              ),
-              _LabeledSlider(
-                label: '蓝光',
-                value: _state.blue,
-                color: const Color(0xFF2585FF),
-                onChanged: (value) =>
-                    setState(() => _state = _state.copyWith(blue: value)),
-              ),
-              _LabeledSlider(
-                label: '白光',
-                value: _state.white,
-                color: const Color(0xFF9BA9C4),
-                onChanged: (value) =>
-                    setState(() => _state = _state.copyWith(white: value)),
-              ),
-              _LabeledSlider(
-                label: 'UV',
-                value: _state.uv,
-                color: const Color(0xFFAD50EE),
-                onChanged: (value) =>
-                    setState(() => _state = _state.copyWith(uv: value)),
-              ),
+                for (final entry in spec.properties.entries)
+                  _LabeledSlider(
+                    label: entry.key,
+                    value: _channels[entry.key] ?? _min(entry.value),
+                    minimum: _min(entry.value),
+                    maximum: _max(entry.value),
+                    onChanged: (value) =>
+                        setState(() => _channels[entry.key] = value),
+                  ),
+              ],
               const SizedBox(height: 8),
               Align(
                 alignment: Alignment.centerLeft,
@@ -219,11 +279,24 @@ class _SceneEditorDialogState extends State<_SceneEditorDialog> {
     );
   }
 
+  int _average() {
+    if (_channels.isEmpty) return 0;
+    final total = _channels.values.reduce((left, right) => left + right);
+    return (total / _channels.length).round();
+  }
+
   void _save() {
     final name = _nameController.text.trim();
     if (name.isEmpty) {
       setState(() => _nameError = '请输入配色名称');
       return;
+    }
+    final properties = <String, Object?>{..._baseProperties};
+    if (_colorProperty != null) {
+      properties[_colorProperty] = Map<String, Object?>.from(_channels);
+    }
+    if (_powerProperty != null) {
+      properties[_powerProperty] = true;
     }
     Navigator.pop(
       context,
@@ -231,10 +304,8 @@ class _SceneEditorDialogState extends State<_SceneEditorDialog> {
         id: widget.scene?.id ?? widget.newId,
         name: name,
         subtitle: _subtitleController.text.trim(),
-        temperature: widget.scene?.temperature ?? 4000,
-        brightness: _state.powerPercent,
         accentValue: _accentValue,
-        state: _state,
+        properties: properties,
       ),
     );
   }
@@ -244,40 +315,39 @@ class _LabeledSlider extends StatelessWidget {
   const _LabeledSlider({
     required this.label,
     required this.value,
-    required this.color,
+    required this.minimum,
+    required this.maximum,
     required this.onChanged,
   });
 
   final String label;
   final int value;
-  final Color color;
+  final int minimum;
+  final int maximum;
   final ValueChanged<int> onChanged;
 
   @override
   Widget build(BuildContext context) {
+    final divisions = maximum - minimum;
     return Row(
       children: [
         SizedBox(
-          width: 48,
+          width: 64,
           child: Text(label, style: const TextStyle(fontSize: 12)),
         ),
         Expanded(
-          child: SliderTheme(
-            data: SliderTheme.of(context)
-                .copyWith(activeTrackColor: color, thumbColor: color),
-            child: Slider(
-              value: value.toDouble().clamp(0, 100),
-              min: 0,
-              max: 100,
-              divisions: 100,
-              onChanged: (newValue) => onChanged(newValue.round()),
-            ),
+          child: Slider(
+            value: value.clamp(minimum, maximum).toDouble(),
+            min: minimum.toDouble(),
+            max: maximum.toDouble(),
+            divisions: divisions > 0 ? divisions : null,
+            onChanged: (newValue) => onChanged(newValue.round()),
           ),
         ),
         SizedBox(
           width: 48,
           child: Text(
-            '$value%',
+            '$value',
             textAlign: TextAlign.right,
             style: const TextStyle(fontSize: 11),
           ),

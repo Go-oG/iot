@@ -36,6 +36,7 @@ class DeviceRegistryService {
   String? selectedDeviceId;
 
   String? _scanId;
+  int _scanGeneration = 0;
   Timer? _scanTimer;
   bool _disposed = false;
   RemoteSnapshot _snapshot = const RemoteSnapshot();
@@ -71,6 +72,7 @@ class DeviceRegistryService {
     nearby.clear();
     runtime.clear();
     diagnostics = null;
+    _invalidateScan();
     selectedDeviceId = null;
     _publish();
   }
@@ -152,9 +154,11 @@ class DeviceRegistryService {
     Duration duration = const Duration(seconds: 5),
   }) async {
     if (scanning) return;
+    final generation = ++_scanGeneration;
     nearby.clear();
     scanning = true;
     _scanId = null;
+    _publish();
     try {
       final response = await _gateway.checked(
         GatewayOption.scan,
@@ -164,31 +168,53 @@ class DeviceRegistryService {
           GatewayField.active.wire: true,
         },
       );
-      _scanId = response.data?[GatewayField.scanId.wire] as String?;
+      if (_disposed || generation != _scanGeneration) return;
+      final scanId = response.data?[GatewayField.scanId.wire];
+      if (scanId is! String || scanId.isEmpty) {
+        throw const FormatException('扫描响应缺少 scanId');
+      }
+      _scanId = scanId;
       // 网关只在扫描结束后停止上报，这里按约定时长自行收尾
       _scanTimer?.cancel();
       _scanTimer = Timer(duration + const Duration(milliseconds: 500), () {
-        scanning = false;
+        if (_disposed || generation != _scanGeneration) return;
+        _invalidateScan();
+        _publish();
       });
     } catch (_) {
-      scanning = false;
+      if (!_disposed && generation == _scanGeneration) {
+        _invalidateScan();
+        _publish();
+      }
       rethrow;
     }
   }
 
   Future<void> stopScan() async {
-    await _gateway.checked(
-      GatewayOption.scan,
-      data: {GatewayField.action.wire: GatewayScanAction.stop.wire},
-    );
+    final generation = ++_scanGeneration;
     _scanTimer?.cancel();
-    scanning = false;
+    _scanId = null;
+    try {
+      await _gateway.checked(
+        GatewayOption.scan,
+        data: {GatewayField.action.wire: GatewayScanAction.stop.wire},
+      );
+    } finally {
+      if (!_disposed && generation == _scanGeneration) {
+        _invalidateScan();
+        _publish();
+      }
+    }
   }
 
   void _onEvent(GatewayEvent event) {
-    if (event.op != GatewayOption.scan || !scanning) return;
-    if (_scanId != null &&
-        event.data?[GatewayField.scanId.wire] != _scanId) {
+    if (event.op == GatewayOption.hello) {
+      _invalidateScan();
+      _publish();
+      return;
+    }
+    if (event.op != GatewayOption.scan || !scanning || event.retained) return;
+    if (_scanId == null || event.data?[GatewayField.scanId.wire] != _scanId) {
       return;
     }
     final devices = event.data?[GatewayField.devices.wire];
@@ -197,11 +223,21 @@ class DeviceRegistryService {
         final id = raw[GatewayField.deviceId.wire];
         if (id is String) nearby[id] = Map<String, Object?>.from(raw);
       }
+      _publish();
     }
+  }
+
+  void _invalidateScan() {
+    _scanGeneration++;
+    _scanTimer?.cancel();
+    _scanTimer = null;
+    scanning = false;
+    _scanId = null;
   }
 
   void _publish() {
     if (_disposed) return;
+    if (!connected && scanning) _invalidateScan();
     final state = _gateway.client.snapshot;
     _snapshot = RemoteSnapshot(
       connection: state.connected
@@ -223,7 +259,7 @@ class DeviceRegistryService {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
-    _scanTimer?.cancel();
+    _invalidateScan();
     await _events.cancel();
     await _subscription.cancel();
     await _changes.close();

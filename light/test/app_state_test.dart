@@ -11,8 +11,10 @@ import 'package:light/src/widgets/app_widgets.dart';
 import 'package:marquee/marquee.dart';
 
 import 'helpers/fake_mqtt.dart';
+import 'helpers/at5_device.dart';
 
 void main() {
+  setUpAll(loadDeviceModelCatalog);
   testWidgets('启动使用传入的持久化依赖并显示已停用的配置', (tester) async {
     final store = MemoryRemoteSettingsStore();
     await store.write(
@@ -25,13 +27,11 @@ void main() {
     );
     final database = AppDatabase.memory();
     final controller = AppController(database, remoteStore: store);
-    await controller.setOutputLimit(65);
 
     await tester.pumpWidget(MyApp(controller: controller));
     await tester.pumpAndSettle();
 
     expect(AppScope.controller, same(controller));
-    expect(controller.outputLimit, 65);
     expect(controller.selectedDeviceId, 'saved-lamp');
     expect(find.text('saved-gateway'), findsOneWidget);
     expect(controller.remoteSettings?.enabled, isFalse);

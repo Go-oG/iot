@@ -26,6 +26,13 @@ App 不再直接扫描或连接 BLE：手机只与 MQTT Broker 通信，蓝牙�
 
 ## 模块化设备控制
 
-设备通过功能列表组装控制界面和命令能力，接入方法见 [设备控制模块](docs/device-modules.md)。
+所有设备都使用设备模型 JSON 接入：模型声明属性、读写通知操作、请求帧字段、长度与校验、响应匹配和界面渲染器，通用层按模型渲染控件、编码下发并解析上报。模型定义见 [device_model.dart](lib/src/core/device_model.dart)，会话见 [device_model_session.dart](lib/src/core/device/device_model_session.dart)，接入方法见 [设备模块与设备模型](docs/device-modules.md)，入口在 **设备页 → 编辑设备模型**。
 
-除内置的 AT5 灯具外，可以用 JSON 配置接入任意 BLE 设备：配置里声明特征、封包规则（前缀 / 命令字节 / 长度 / 校验）和每条命令的字节布局，App 就按这套规则把功能值编码后经 MQTT 网关下发，并把通知解码回功能状态。字段说明与校验规则见 [通用设备远程读写协议设计](docs/generic-device-codec.md)，入口在 **我的 → 通用设备协议**。
+帧定义使用字符串模板，例如 `AA55 ${length:u8} ${seq:u8} 2103 ${value:u16be,scale=0.1} ${crc16modbus}`：出现顺序即帧内顺序，长度与校验范围按字段名引用，模型载入时编译成运行时结构。
+
+配色与计划同样保存设备属性值：应用配色、切换计划、调整输出上限都经设备模型会话下发，控制器不保存灯光面板状态。
+
+## 设备模型与架构分析
+
+- [设备管理与命令下发分析](docs/architecture-review.md)
+- [设备模块与设备模型](docs/device-modules.md)

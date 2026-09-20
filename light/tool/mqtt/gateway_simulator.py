@@ -203,6 +203,9 @@ class Gateway:
 
     def reply(self, request, code=OK, message=None, data=None, **extra):
         response = {"type": "res", "reqId": request.get("reqId"), "op": request.get("op"), "code": code}
+        for field in ("deviceId", "service", "char"):
+            if field in request:
+                response[field] = request[field]
         response["message"] = message if message is not None else ("ok" if code == OK else None)
         if data is not None:
             response["data"] = data

@@ -27,7 +27,9 @@ class RemoteControlCard extends StatelessWidget {
         titleIcon: OnlineStatusView(online: config != null && connected),
         trailing: IconButton(
           tooltip: config == null ? '配置连接' : '编辑连接',
-          onPressed: controller.applying ? null : () => context.push('/mqtt-settings'),
+          onPressed: controller.devicesBusy
+              ? null
+              : () => context.push('/mqtt-settings'),
           icon: const Icon(Icons.edit, color: AppColors.blue, size: 24),
         ),
       ),
@@ -40,15 +42,17 @@ class RemoteControlCard extends StatelessWidget {
       }
       wList.add(const Divider(height: 22));
       wList.add(
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        // 窄屏下四个入口按可用宽度换行，避免长标签横向溢出
+        Wrap(
           spacing: 8,
+          runSpacing: 4,
+          alignment: WrapAlignment.spaceBetween,
           children: [
             _CardAction(icon: Icons.terminal_rounded, label: '消息调试', onPressed: () => context.push('/mqtt-debug')),
             _CardAction(
               icon: Icons.refresh_rounded,
               label: '重连服务器',
-              onPressed: controller.applying ? null : controller.reconnectRemote,
+              onPressed: controller.devicesBusy ? null : controller.reconnectRemote,
             ),
             _CardAction(
               icon: Icons.memory_rounded,
@@ -58,7 +62,9 @@ class RemoteControlCard extends StatelessWidget {
             _CardAction(
               icon: Icons.delete_outline_rounded,
               label: '移除连接',
-              onPressed: controller.applying ? null : () => _confirmRemove(context, controller),
+              onPressed: controller.devicesBusy
+                  ? null
+                  : () => _confirmRemove(context, controller),
             ),
           ],
         ),

@@ -1,36 +1,18 @@
 import 'dart:convert';
 
-import '../core/device/function_type.dart';
-import '../core/device/impl/generic_device.dart';
+import 'device_key.dart';
 
-/// 功能类型的默认状态，取该功能在默认配置下的初始值
-extension ConfigurableFunctionDefaults on ConfigurableFunction {
-  Object get defaultStatus {
-    final device = GenericDevice.fromJson({
-      'id': 'default',
-      'name': '默认配置',
-      'functions': [
-        {'type': wire},
-      ],
-    });
-    try {
-      return device.status[this]!;
-    } finally {
-      device.dispose();
-    }
-  }
-}
+import '../core/device_model.dart';
 
+/// 一台设备的定义：直接保存 [DeviceModel] 的 JSON
+///
+/// 设备模型同时描述属性、能力、报文布局和界面渲染器，因此配置里不再区分
+/// 协议类型，也不再保存任何设备私有的 Dart 结构。
 class DeviceConfiguration {
-  DeviceConfiguration._(this._json);
+  DeviceConfiguration._(this.model, [this.gatewayId = '']);
 
   factory DeviceConfiguration.fromJson(Map<String, Object?> json) {
-    final device = GenericDevice.fromJson(json);
-    try {
-      return DeviceConfiguration._(device.toJson());
-    } finally {
-      device.dispose();
-    }
+    return DeviceConfiguration._(DeviceModel.fromJson(json));
   }
 
   factory DeviceConfiguration.fromJsonString(String source) {
@@ -40,17 +22,17 @@ class DeviceConfiguration {
     return DeviceConfiguration.fromJson(decoded);
   }
 
-  final Map<String, Object?> _json;
+  final DeviceModel model;
+  final String gatewayId;
+  DeviceKey get key => DeviceKey(gatewayId, id);
+  DeviceConfiguration withGateway(String gatewayId) =>
+      DeviceConfiguration._(model, gatewayId);
 
-  String get id => _json['id'] as String;
-  String get name => _json['name'] as String;
-  String get macd => _json['macd'] as String;
+  String get id => model.id;
+  String get name => model.name;
 
-  Map<String, Object?> toJson() =>
-      jsonDecode(jsonEncode(_json)) as Map<String, Object?>;
+  Map<String, Object?> toJson() => model.toJson();
 
-  List<Map<String, Object?>> get functions =>
-      (toJson()['functions'] as List).cast<Map<String, Object?>>();
-
-  String toJsonString() => const JsonEncoder.withIndent('  ').convert(_json);
+  String toJsonString() =>
+      const JsonEncoder.withIndent('  ').convert(model.toJson());
 }

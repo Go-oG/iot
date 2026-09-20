@@ -5,12 +5,14 @@ import 'package:light/src/app/controller.dart';
 import 'package:light/src/app/router.dart';
 import 'package:light/src/app/scope.dart';
 import 'package:light/src/app/theme.dart';
+import 'package:light/src/core/device/device_model_catalog.dart';
 import 'package:light/src/data/database.dart';
 import 'package:light/src/data/remote_settings.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+  await DeviceModelCatalog.load();
   final database = await AppDatabase.open();
   final controller = AppController(database, remoteStore: SecureRemoteSettingsStore());
   runApp(MyApp(controller: controller));

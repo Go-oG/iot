@@ -145,9 +145,9 @@ class ProfilePage extends StatelessWidget {
                   ),
                   _ActionTile(
                     icon: Icons.tune_rounded,
-                    label: '通用设备协议',
-                    subtitle: '配置读写命令与编码',
-                    onTap: () => context.go('/device-functions'),
+                    label: '设备物模型',
+                    subtitle: '配置属性、服务与控制命令',
+                    onTap: () => context.go('/thing-model'),
                   ),
                 ],
               ),
@@ -170,7 +170,8 @@ Future<void> _editScene(
     context,
     newId: controller.createSceneId(),
     scene: scene,
-    initialState: useCurrent ? controller.lightState : null,
+    model: controller.selectedModel,
+    initialProperties: useCurrent ? controller.currentProperties : null,
   );
   if (result != null) {
     controller.saveScene(result);
@@ -455,7 +456,7 @@ class _SceneCard extends StatelessWidget {
                           ),
                         ),
                         Text(
-                          '平均亮度 ${scene.state.powerPercent}%',
+                          '平均亮度 ${scene.brightness}%',
                           style: const TextStyle(
                             color: AppColors.muted,
                             fontSize: 9,
@@ -493,7 +494,11 @@ class _SceneCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    '红 ${scene.state.red} · 绿 ${scene.state.green} · 蓝 ${scene.state.blue}\n白 ${scene.state.white} · UV ${scene.state.uv}',
+                    scene.channels.entries
+                        .map((entry) => '${entry.key} ${entry.value}')
+                        .join(' · '),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 10),
                   ),
                 ],

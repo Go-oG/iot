@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:light/src/core/functions/light.dart';
 import 'package:light/src/data/color_presets.dart';
 import 'package:light/src/data/models.dart';
 import 'package:path_provider/path_provider.dart';
@@ -9,25 +8,34 @@ import 'package:sqlite3/sqlite3.dart';
 
 import 'device_configuration.dart';
 
+/// 本机数据库：只保存与设备无关的数据和属性值
+///
+/// 控制面板状态与设备模型会话都在内存里，数据库不再保存灯光参数、
+/// 输出上限或按设备划分的本机设置，因此没有设置表
 class AppDatabase {
   AppDatabase._(this._database);
 
   final Database _database;
 
+  /// 当前 schema 版本，写入 SQLite 的 user_version
+  static const int schemaVersion = 5;
+
   static Future<AppDatabase> open() async {
     final directory = await getApplicationSupportDirectory();
     await directory.create(recursive: true);
     final path = '${directory.path}${Platform.pathSeparator}light.sqlite3';
+    return AppDatabase.openFile(path);
+  }
+
+  factory AppDatabase.openFile(String path) {
     final appDatabase = AppDatabase._(sqlite3.open(path));
     appDatabase._migrate();
-    appDatabase._seed();
     return appDatabase;
   }
 
   static AppDatabase memory() {
     final appDatabase = AppDatabase._(sqlite3.openInMemory());
     appDatabase._migrate();
-    appDatabase._seed();
     return appDatabase;
   }
 
@@ -51,31 +59,22 @@ class AppDatabase {
         .toList();
   }
 
-  List<SavedDevice> loadDevices() {
+  List<SavedDevice> loadDevices({String? gatewayId}) {
     final devices = _database
-        .select('SELECT id, data_json FROM saved_devices')
+        .select(
+          'SELECT gateway_id, id, data_json FROM saved_devices${gatewayId == null ? '' : ' WHERE gateway_id = ?'}',
+          [if (gatewayId != null) gatewayId],
+        )
         .map(
-          (row) =>
-              SavedDevice.fromJson(_decodeJson(row['data_json'] as String)),
+          (row) => SavedDevice.fromJson(
+            _decodeJson(row['data_json'] as String),
+          ).copyWith(gatewayId: row['gateway_id'] as String),
         )
         .toList();
     devices.sort(
       (left, right) => right.lastConnectedAt.compareTo(left.lastConnectedAt),
     );
     return devices;
-  }
-
-  ControlSettings loadSettings() {
-    final rows = _database.select(
-      'SELECT data_json FROM app_settings WHERE key = ?',
-      ['control'],
-    );
-    if (rows.isEmpty) {
-      return ControlSettings.defaults;
-    }
-    return ControlSettings.fromJson(
-      _decodeJson(rows.first['data_json'] as String),
-    );
   }
 
   void saveScene(ScenePreset scene) {
@@ -112,22 +111,31 @@ class AppDatabase {
 
   void saveDevice(SavedDevice device) {
     _database.execute(
-      'INSERT INTO saved_devices(id, data_json) VALUES (?, ?) '
-      'ON CONFLICT(id) DO UPDATE SET data_json = excluded.data_json',
-      [device.id, jsonEncode(device.toJson())],
+      'INSERT INTO saved_devices(gateway_id, id, data_json) VALUES (?, ?, ?) '
+      'ON CONFLICT(gateway_id, id) DO UPDATE SET data_json = excluded.data_json',
+      [device.gatewayId, device.id, jsonEncode(device.toJson())],
     );
   }
 
-  void deleteDevice(String id) {
-    _database.execute('DELETE FROM saved_devices WHERE id = ?', [id]);
+  void deleteDevice(String id, {String gatewayId = ''}) {
+    _database.execute(
+      'DELETE FROM saved_devices WHERE gateway_id = ? AND id = ?',
+      [gatewayId, id],
+    );
   }
 
-  List<DeviceConfiguration> loadDeviceConfigurations() => _database
-      .select('SELECT data_json FROM device_configurations ORDER BY rowid DESC')
-      .map(
-        (row) => DeviceConfiguration.fromJsonString(row['data_json'] as String),
-      )
-      .toList();
+  List<DeviceConfiguration> loadDeviceConfigurations({String? gatewayId}) =>
+      _database
+          .select(
+            'SELECT gateway_id, data_json FROM device_configurations${gatewayId == null ? '' : ' WHERE gateway_id = ?'} ORDER BY rowid DESC',
+            [if (gatewayId != null) gatewayId],
+          )
+          .map(
+            (row) => DeviceConfiguration.fromJsonString(
+              row['data_json'] as String,
+            ).withGateway(row['gateway_id'] as String),
+          )
+          .toList();
 
   void saveDeviceConfiguration(
     DeviceConfiguration configuration, {
@@ -135,31 +143,49 @@ class AppDatabase {
   }) {
     _transaction(() {
       if (configuration.id != previousId &&
-          _database.select(
-            'SELECT id FROM device_configurations WHERE id = ?',
-            [configuration.id],
-          ).isNotEmpty) {
+          _database
+              .select(
+                'SELECT id FROM device_configurations WHERE gateway_id = ? AND id = ?',
+                [configuration.gatewayId, configuration.id],
+              )
+              .isNotEmpty) {
         throw StateError('设备标识已存在，请更换标识后保存');
       }
       _database.execute(
-        'INSERT INTO device_configurations(id, data_json) VALUES (?, ?) '
-        'ON CONFLICT(id) DO UPDATE SET data_json = excluded.data_json',
-        [configuration.id, configuration.toJsonString()],
+        'INSERT INTO device_configurations(gateway_id, id, data_json) VALUES (?, ?, ?) '
+        'ON CONFLICT(gateway_id, id) DO UPDATE SET data_json = excluded.data_json',
+        [
+          configuration.gatewayId,
+          configuration.id,
+          configuration.toJsonString(),
+        ],
       );
-      if (previousId != null && previousId != configuration.id)
-        deleteDeviceConfiguration(previousId);
+      if (previousId != null && previousId != configuration.id) {
+        deleteDeviceConfiguration(
+          previousId,
+          gatewayId: configuration.gatewayId,
+        );
+      }
     });
   }
 
-  void deleteDeviceConfiguration(String id) =>
-      _database.execute('DELETE FROM device_configurations WHERE id = ?', [id]);
+  void deleteDeviceConfiguration(String id, {String gatewayId = ''}) =>
+      _database.execute(
+        'DELETE FROM device_configurations WHERE gateway_id = ? AND id = ?',
+        [gatewayId, id],
+      );
 
-  void saveSettings(ControlSettings settings) {
-    _database.execute(
-      'INSERT INTO app_settings(key, data_json) VALUES (?, ?) '
-      'ON CONFLICT(key) DO UPDATE SET data_json = excluded.data_json',
-      ['control', jsonEncode(settings.toJson())],
-    );
+  /// 旧版本的数据没有网关归属，连接成功后统一归到当前网关
+  void bindLegacyGateway(String gatewayId) {
+    if (gatewayId.isEmpty) return;
+    _transaction(() {
+      for (final table in ['saved_devices', 'device_configurations']) {
+        _database.execute(
+          'UPDATE OR IGNORE $table SET gateway_id = ? WHERE gateway_id = ?',
+          [gatewayId, ''],
+        );
+      }
+    });
   }
 
   AppDataBundle exportData() {
@@ -168,12 +194,11 @@ class AppDatabase {
       schedules: loadSchedules(),
       devices: loadDevices(),
       deviceConfigurations: loadDeviceConfigurations(),
-      settings: loadSettings(),
       exportedAt: DateTime.now(),
     );
   }
 
-  void replaceData(AppDataBundle data) {
+  void replaceData(AppDataBundle data, {String legacyGatewayId = ''}) {
     _validateBackup(data);
     _transaction(() {
       _database.execute('DELETE FROM schedules');
@@ -187,15 +212,24 @@ class AppDatabase {
         saveSchedule(schedule);
       }
       for (final device in data.devices) {
-        saveDevice(device);
+        saveDevice(
+          device.gatewayId.isEmpty
+              ? device.copyWith(gatewayId: legacyGatewayId)
+              : device,
+        );
       }
       for (final configuration in data.deviceConfigurations) {
         _database.execute(
-          'INSERT INTO device_configurations(id, data_json) VALUES (?, ?)',
-          [configuration.id, configuration.toJsonString()],
+          'INSERT INTO device_configurations(gateway_id, id, data_json) VALUES (?, ?, ?)',
+          [
+            configuration.gatewayId.isEmpty
+                ? legacyGatewayId
+                : configuration.gatewayId,
+            configuration.id,
+            configuration.toJsonString(),
+          ],
         );
       }
-      saveSettings(data.settings);
     });
   }
 
@@ -205,7 +239,6 @@ class AppDatabase {
       _database.execute('DELETE FROM scenes');
       _database.execute('DELETE FROM saved_devices');
       _database.execute('DELETE FROM device_configurations');
-      _database.execute('DELETE FROM app_settings');
     });
     _seed();
   }
@@ -214,15 +247,40 @@ class AppDatabase {
 
   void _migrate() {
     _database.execute('PRAGMA foreign_keys = OFF');
-    if (_tableExists('scenes') && !_columnExists('scenes', 'data_json')) {
-      _migrateLegacyTables();
-    }
+    final version = _userVersion();
+    final legacyColumns =
+        _tableExists('scenes') && !_columnExists('scenes', 'data_json');
+    if (legacyColumns) _migrateLegacyTables();
     _createJsonTables();
-    // 移除旧版本保存的操作历史
+    _migrateScopedDevices();
+    // 操作历史与面板设置表都已停用，旧库升级时直接删除
     _database.execute('DROP TABLE IF EXISTS activity_logs');
-    _database.execute('PRAGMA user_version = 3');
+    _database.execute('DROP TABLE IF EXISTS device_settings');
+    _database.execute('DROP TABLE IF EXISTS app_settings');
+    _database.execute('PRAGMA user_version = $schemaVersion');
+    // 只有全新数据库写入内置配色与默认计划，升级不覆盖用户改过的数据
+    if (version < 1) {
+      _seed();
+    }
   }
 
+  void _migrateScopedDevices() {
+    _transaction(() {
+      for (final table in ['saved_devices', 'device_configurations']) {
+        if (_columnExists(table, 'gateway_id')) continue;
+        _database.execute('ALTER TABLE $table RENAME TO ${table}_v3');
+        _database.execute(
+          "CREATE TABLE $table (gateway_id TEXT NOT NULL DEFAULT '', id TEXT NOT NULL, data_json TEXT NOT NULL, PRIMARY KEY(gateway_id, id)) STRICT",
+        );
+        _database.execute(
+          "INSERT INTO $table(gateway_id, id, data_json) SELECT '', id, data_json FROM ${table}_v3",
+        );
+        _database.execute('DROP TABLE ${table}_v3');
+      }
+    });
+  }
+
+  /// 旧版本把配色和计划拆成多列，这里按属性值重新写入 JSON 表
   void _migrateLegacyTables() {
     final scenes = _database
         .select('SELECT * FROM scenes ORDER BY sort_order')
@@ -256,7 +314,7 @@ class AppDatabase {
 
   void _createJsonTables() {
     _database.execute(
-      'CREATE TABLE IF NOT EXISTS device_configurations (id TEXT PRIMARY KEY, data_json TEXT NOT NULL) STRICT',
+      "CREATE TABLE IF NOT EXISTS device_configurations (gateway_id TEXT NOT NULL DEFAULT '', id TEXT NOT NULL, data_json TEXT NOT NULL, PRIMARY KEY(gateway_id, id)) STRICT",
     );
     _database.execute('''
       CREATE TABLE IF NOT EXISTS scenes (
@@ -272,175 +330,84 @@ class AppDatabase {
     ''');
     _database.execute('''
       CREATE TABLE IF NOT EXISTS saved_devices (
-        id TEXT PRIMARY KEY,
-        data_json TEXT NOT NULL
-      ) STRICT
-    ''');
-    _database.execute('''
-      CREATE TABLE IF NOT EXISTS app_settings (
-        key TEXT PRIMARY KEY,
-        data_json TEXT NOT NULL
+        gateway_id TEXT NOT NULL DEFAULT '',
+        id TEXT NOT NULL,
+        data_json TEXT NOT NULL,
+        PRIMARY KEY(gateway_id, id)
       ) STRICT
     ''');
   }
 
+  /// 写入内置配色与默认计划，恢复默认数据时同样走这里
   void _seed() {
-    _seedInitialPresets();
-    _seedCommunityPresets();
-    _dimSavedPresets();
-  }
-
-  void _dimSavedPresets() {
-    if (_database.select('SELECT key FROM app_settings WHERE key = ?', [
-      'aquarium_presets_v3',
-    ]).isNotEmpty) {
-      return;
-    }
     _transaction(() {
-      final existing = {for (final preset in loadScenes()) preset.id: preset};
-      // 仅更新完整匹配旧默认值的配色，保留自定义修改与删除记录
-      for (
-        var index = 0;
-        index < originalAquariumColorPresets.length;
-        index++
-      ) {
-        final original = originalAquariumColorPresets[index];
-        final current = existing[original.id];
-        if (current != null &&
-            jsonEncode(current.toJson()) == jsonEncode(original.toJson())) {
-          saveScene(aquariumColorPresets[index]);
-        }
-      }
-      _database.execute(
-        'INSERT INTO app_settings(key, data_json) VALUES (?, ?)',
-        ['aquarium_presets_v3', '{}'],
-      );
-    });
-  }
-
-  void _seedCommunityPresets() {
-    if (_database.select('SELECT key FROM app_settings WHERE key = ?', [
-      'aquarium_presets_v2',
-    ]).isNotEmpty) {
-      return;
-    }
-    _transaction(() {
-      final existingIds = loadScenes().map((scene) => scene.id).toSet();
-      // 只补充本次新增方案，避免恢复已删除的旧配色或覆盖同标识的自定义数据
-      for (final preset in aquariumCommunityColorPresets) {
-        if (!existingIds.contains(preset.id)) {
+      if ((_database.select(
+                'SELECT COUNT(*) AS count FROM scenes',
+              ).first['count']
+              as int) ==
+          0) {
+        for (final preset in [
+          ...aquariumColorPresets,
+          ...aquariumCommunityColorPresets,
+        ]) {
           saveScene(preset);
         }
       }
-      _database.execute(
-        'INSERT INTO app_settings(key, data_json) VALUES (?, ?)',
-        ['aquarium_presets_v2', '{}'],
-      );
-    });
-  }
-
-  void _seedInitialPresets() {
-    if (_database.select('SELECT key FROM app_settings WHERE key = ?', [
-      'aquarium_presets_v1',
-    ]).isNotEmpty) {
-      return;
-    }
-    final existing = loadScenes();
-    final isNewDatabase =
-        existing.isEmpty &&
-        _database.select('SELECT key FROM app_settings WHERE key = ?', [
-          'control',
-        ]).isEmpty;
-    _transaction(() {
-      // 仅替换未修改的旧默认方案，并保留计划关联
-      for (var index = 0; index < _legacyScenePresets.length; index++) {
-        final legacy = _legacyScenePresets[index];
-        final current = existing
-            .where((item) => item.id == legacy.id)
-            .firstOrNull;
-        if (current != null &&
-            jsonEncode(current.toJson()) == jsonEncode(legacy.toJson())) {
-          for (final plan in loadSchedules().where(
-            (item) => item.sceneId == legacy.id,
-          )) {
-            saveSchedule(
-              plan.copyWith(sceneId: aquariumColorPresets[index].id),
-            );
-          }
-          _database.execute('DELETE FROM scenes WHERE id = ?', [legacy.id]);
-        }
-      }
-      for (final preset in aquariumColorPresets) {
-        if (!existing.any((item) => item.id == preset.id)) {
-          saveScene(preset);
-        }
-      }
-      if (isNewDatabase) {
+      if ((_database.select(
+                'SELECT COUNT(*) AS count FROM schedules',
+              ).first['count']
+              as int) ==
+          0) {
         _seedSchedules();
       }
-      if (_database.select('SELECT key FROM app_settings WHERE key = ?', [
-        'control',
-      ]).isEmpty) {
-        saveSettings(ControlSettings.defaults);
-      }
-      // 用一次性标记避免用户删除的配色和计划在重启后重新出现
-      _database.execute(
-        'INSERT INTO app_settings(key, data_json) VALUES (?, ?)',
-        ['aquarium_presets_v1', '{}'],
-      );
     });
   }
 
   void _seedSchedules() {
-    final scheduleCount = _database.select(
-      'SELECT COUNT(*) AS count FROM schedules',
-    );
-    if ((scheduleCount.first['count'] as int) == 0) {
-      final schedules = [
-        const SchedulePlan(
-          id: 1,
-          enabled: true,
-          startHour: 7,
-          startMinute: 0,
-          endHour: 8,
-          endMinute: 0,
-          repeatLabel: '周一至周五',
-          sceneId: 'aquarium_daylight',
-        ),
-        const SchedulePlan(
-          id: 2,
-          enabled: true,
-          startHour: 12,
-          startMinute: 0,
-          endHour: 14,
-          endMinute: 0,
-          repeatLabel: '每天',
-          sceneId: 'aquarium_warm',
-        ),
-        const SchedulePlan(
-          id: 3,
-          enabled: true,
-          startHour: 18,
-          startMinute: 0,
-          endHour: 21,
-          endMinute: 0,
-          repeatLabel: '每天',
-          sceneId: 'aquarium_blue',
-        ),
-        const SchedulePlan(
-          id: 4,
-          enabled: false,
-          startHour: 22,
-          startMinute: 0,
-          endHour: 6,
-          endMinute: 0,
-          repeatLabel: '每天',
-          sceneId: 'aquarium_evening',
-        ),
-      ];
-      for (final schedule in schedules) {
-        saveSchedule(schedule);
-      }
+    final schedules = [
+      SchedulePlan.fromFields(
+        id: 1,
+        enabled: true,
+        startHour: 7,
+        startMinute: 0,
+        endHour: 8,
+        endMinute: 0,
+        repeatLabel: '周一至周五',
+        sceneId: 'aquarium_daylight',
+      ),
+      SchedulePlan.fromFields(
+        id: 2,
+        enabled: true,
+        startHour: 12,
+        startMinute: 0,
+        endHour: 14,
+        endMinute: 0,
+        repeatLabel: '每天',
+        sceneId: 'aquarium_warm',
+      ),
+      SchedulePlan.fromFields(
+        id: 3,
+        enabled: true,
+        startHour: 18,
+        startMinute: 0,
+        endHour: 21,
+        endMinute: 0,
+        repeatLabel: '每天',
+        sceneId: 'aquarium_blue',
+      ),
+      SchedulePlan.fromFields(
+        id: 4,
+        enabled: false,
+        startHour: 22,
+        startMinute: 0,
+        endHour: 6,
+        endMinute: 0,
+        repeatLabel: '每天',
+        sceneId: 'aquarium_evening',
+      ),
+    ];
+    for (final schedule in schedules) {
+      saveSchedule(schedule);
     }
   }
 
@@ -449,21 +416,22 @@ class AppDatabase {
       id: row['id'] as String,
       name: row['name'] as String,
       subtitle: row['subtitle'] as String,
-      temperature: row['temperature'] as int,
-      brightness: row['brightness'] as int,
       accentValue: row['accent_value'] as int,
-      state: LightState(
-        red: row['red'] as int,
-        green: row['green'] as int,
-        blue: row['blue'] as int,
-        white: row['white_channel'] as int,
-        uv: row['uv'] as int,
-      ),
+      properties: {
+        'power': true,
+        presetChannelProperty: {
+          'red': row['red'] as int,
+          'green': row['green'] as int,
+          'blue': row['blue'] as int,
+          'white': row['white_channel'] as int,
+          'uv': row['uv'] as int,
+        },
+      },
     );
   }
 
   SchedulePlan _legacySchedule(Row row) {
-    return SchedulePlan(
+    return SchedulePlan.fromFields(
       id: row['id'] as int,
       enabled: (row['enabled'] as int) == 1,
       startHour: row['start_hour'] as int,
@@ -479,7 +447,6 @@ class AppDatabase {
     return SavedDevice(
       id: row['id'] as String,
       name: row['name'] as String,
-      model: DeviceModel.parse(row['model']),
       room: row['room'] as String,
       lastConnectedAt: DateTime.fromMillisecondsSinceEpoch(
         row['last_connected_at'] as int,
@@ -502,22 +469,27 @@ class AppDatabase {
     if (data.schedules.any((item) => !sceneIds.contains(item.sceneId))) {
       throw const FormatException('计划引用了不存在的配色');
     }
-    final deviceIds = data.devices.map((item) => item.id).toSet();
+    final deviceIds = data.devices.map((item) => item.key).toSet();
     if (deviceIds.length != data.devices.length ||
-        deviceIds.any((id) => id.isEmpty)) {
+        deviceIds.any((key) => key.deviceId.isEmpty)) {
       throw const FormatException('设备标识重复或为空');
     }
-    if (data.deviceConfigurations.map((item) => item.id).toSet().length !=
+    if (data.deviceConfigurations.map((item) => item.key).toSet().length !=
         data.deviceConfigurations.length) {
       throw const FormatException('功能配置的设备标识重复');
     }
   }
 
+  int _userVersion() =>
+      _database.select('PRAGMA user_version').first.values.first as int;
+
   bool _tableExists(String table) {
-    return _database.select(
-      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
-      [table],
-    ).isNotEmpty;
+    return _database
+        .select(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+          [table],
+        )
+        .isNotEmpty;
   }
 
   bool _columnExists(String table, String column) {
@@ -546,52 +518,3 @@ class AppDatabase {
     }
   }
 }
-
-// 用完整数据匹配旧默认值，避免覆盖用户改过的名称和通道参数
-const _legacyScenePresets = [
-  ScenePreset(
-    id: 'daylight',
-    name: '日光',
-    subtitle: '清澈自然',
-    temperature: 5000,
-    brightness: 80,
-    accentValue: 0xFF38A7FF,
-    state: LightState(red: 72, green: 68, blue: 56, white: 82, uv: 36),
-  ),
-  ScenePreset(
-    id: 'relax',
-    name: '放松',
-    subtitle: '柔和舒缓',
-    temperature: 4000,
-    brightness: 55,
-    accentValue: 0xFF62D3B4,
-    state: LightState(red: 52, green: 45, blue: 38, white: 70, uv: 22),
-  ),
-  ScenePreset(
-    id: 'reading',
-    name: '阅读',
-    subtitle: '明亮专注',
-    temperature: 5200,
-    brightness: 92,
-    accentValue: 0xFFFFB449,
-    state: LightState(red: 80, green: 76, blue: 68, white: 100, uv: 36),
-  ),
-  ScenePreset(
-    id: 'movie',
-    name: '观影',
-    subtitle: '低亮沉浸',
-    temperature: 3200,
-    brightness: 35,
-    accentValue: 0xFF7C6BFF,
-    state: LightState(red: 28, green: 22, blue: 40, white: 50, uv: 35),
-  ),
-  ScenePreset(
-    id: 'sleep',
-    name: '助眠',
-    subtitle: '安静夜色',
-    temperature: 2700,
-    brightness: 22,
-    accentValue: 0xFF465FCF,
-    state: LightState(red: 12, green: 10, blue: 26, white: 42, uv: 20),
-  ),
-];

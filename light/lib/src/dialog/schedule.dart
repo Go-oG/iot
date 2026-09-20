@@ -147,21 +147,32 @@ class _ScheduleEditorDialogState extends State<_ScheduleEditorDialog> {
   }
 
   void _save() {
-    Navigator.pop(
-      context,
-      SchedulePlan(
-        id: widget.plan?.id ?? widget.newId,
-        enabled: _enabled,
-        startHour: _start.hour,
-        startMinute: _start.minute,
-        endHour: _end.hour,
-        endMinute: _end.minute,
-        repeatLabel: _repeatController.text.trim().isEmpty
-            ? '每天'
-            : _repeatController.text.trim(),
-        sceneId: _sceneId,
-      ),
-    );
+    final repeatLabel = _repeatController.text.trim().isEmpty
+        ? '每天'
+        : _repeatController.text.trim();
+    final plan = widget.plan;
+    // 定时槽位以属性值保存，编辑已有计划时保留日出日落等其它字段
+    final result = plan == null
+        ? SchedulePlan.fromFields(
+            id: widget.newId,
+            enabled: _enabled,
+            startHour: _start.hour,
+            startMinute: _start.minute,
+            endHour: _end.hour,
+            endMinute: _end.minute,
+            repeatLabel: repeatLabel,
+            sceneId: _sceneId,
+          )
+        : plan.copyWith(
+            enabled: _enabled,
+            startHour: _start.hour,
+            startMinute: _start.minute,
+            endHour: _end.hour,
+            endMinute: _end.minute,
+            repeatLabel: repeatLabel,
+            sceneId: _sceneId,
+          );
+    Navigator.pop(context, result);
   }
 }
 

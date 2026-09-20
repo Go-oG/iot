@@ -3,29 +3,27 @@ import 'dart:convert';
 import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
-import 'package:light/src/core/device/device.dart';
-import 'package:light/src/core/device/function_type.dart';
-import 'package:light/src/core/device/generic_session.dart';
-import 'package:light/src/core/functions/fan_speed.dart';
-import 'package:light/src/core/functions/light.dart';
-import 'package:light/src/core/functions/timer.dart';
-import 'package:light/src/core/keep_alive.dart';
+
 import 'package:light/src/data/backup_service.dart';
 import 'package:light/src/data/database.dart';
 import 'package:light/src/data/models.dart';
 
-import '../core/device/impl/at5_device.dart';
-import '../core/functions/base.dart';
-import '../core/functions/power.dart';
-import '../core/functions/temperature.dart';
+import '../core/device/device_model_catalog.dart';
+import '../core/device/device_model_session.dart';
+import '../core/device_model.dart';
 import '../core/device_registry.dart';
-import '../core/protocol/remote_protocol.dart';
-import '../core/remote/device_session.dart';
-import '../core/remote_gateway.dart';
+import '../core/keep_alive.dart';
 import '../core/protocol/client.dart';
+import '../core/protocol/remote_protocol.dart';
+import '../core/remote_gateway.dart';
 import '../data/device_configuration.dart';
+import '../data/device_key.dart';
 import '../data/remote_settings.dart';
 
+/// 应用状态：本机数据、网关通道与每台设备的模型会话
+///
+/// 控制器不保存任何灯光面板状态：配色与计划只保存属性值，开关与输出上限
+/// 都经 [DeviceModelSession] 下发，界面显示一律以设备回报为准
 class AppController extends ChangeNotifier {
   AppController(
     this._database, {
@@ -39,6 +37,9 @@ class AppController extends ChangeNotifier {
     _registrySubscription = _registry.changes.listen(_onRegistryChanged);
   }
 
+  /// 支持输出上限的属性标识，没有该属性的设备按上限收敛数值属性
+  static const String outputLimitProperty = 'outputLimit';
+
   final AppDatabase _database;
   final BackupService _backupService;
   final RemoteGateway _remote;
@@ -47,27 +48,18 @@ class AppController extends ChangeNotifier {
   StreamSubscription<RemoteSnapshot>? _registrySubscription;
   bool _disposed = false;
   bool _remoteStarting = false;
+  bool _changingContext = false;
 
-  /// 用户是否正在本机调光：拖动期间不让预览被其它状态覆盖
-  bool _editingLight = false;
   RemoteSettings? remoteSettings;
-  bool applying = false;
-  String? commandStatus;
-  int outputLimit = ControlSettings.defaults.outputLimit;
-  LightState? _masterBrightnessSource;
+  String? userMessage;
+  int messageVersion = 0;
+  DateTime? _lastMessageAt;
 
   List<ScenePreset> scenes = const [];
   List<SchedulePlan> schedules = const [];
   List<SavedDevice> savedDevices = const [];
   List<DeviceConfiguration> deviceConfigurations = const [];
-  LightState lightState = ControlSettings.defaults.lightState;
-  bool powerEnabled = ControlSettings.defaults.powerEnabled;
-  int temperature = ControlSettings.defaults.temperature;
-  FanSpeed fanSpeed = ControlSettings.defaults.fanSpeed;
-  bool reconnecting = false;
-  String? userMessage;
-  int messageVersion = 0;
-  DateTime? _lastMessageAt;
+  final Map<DeviceKey, DeviceModelSession> _modelSessions = {};
 
   RemoteGateway get mqttGateway => _remote;
 
@@ -87,212 +79,102 @@ class AppController extends ChangeNotifier {
       selectedDeviceId ??
       '请选择灯具';
 
-  /// 默认的控制对象就是 AT5：它同时是远端通道上的编解码器
-  final At5Client _defaultControlDevice = At5Client();
-  GenericDeviceSession? _genericSession;
-  DeviceRemoteSession? _at5Session;
+  String get gatewayId => remoteSettings?.gatewayId ?? '';
+  DeviceKey deviceKey(String id) => DeviceKey(gatewayId, id);
 
-  /// 当前控制对象：选中通用设备配置时使用它自己的设备实例，否则使用 AT5 描述符
-  Device get controlDevice => _genericSession?.device ?? _defaultControlDevice;
+  /// 本地保存的设备模型，没有配置的设备按内置的 AT5 定义处理
+  DeviceModel deviceModelFor(String id) =>
+      deviceConfigurations
+          .where((item) => item.id == id)
+          .firstOrNull
+          ?.model ??
+      DeviceModelCatalog.instance.defaultModel;
 
-  /// 当前是否在控制由配置驱动的通用设备
-  bool get controllingGenericDevice => _genericSession != null;
+  /// 当前控制设备的模型定义
+  DeviceModel get selectedModel => deviceModelFor(selectedDeviceId ?? '');
 
-  /// 指定设备的功能卡片，用于设备详情页
-  ///
-  /// 设备不是当前控制对象时返回占位卡片，避免把选中的设备状态画到别的设备上。
-  Device deviceCardFor(String deviceId) {
-    if (selectedDeviceId != deviceId) return _emptyDevice;
-    return controlDevice;
+  /// 由设备模型驱动的会话：界面用它下发命令、解析上报
+  DeviceModelSession deviceSessionFor(String id) =>
+      _modelSessions.putIfAbsent(deviceKey(id), () {
+        return DeviceModelSession(
+          model: deviceModelFor(id),
+          client: _remote.client,
+        );
+      });
+
+  void _removeModelSession(String id) {
+    final session = _modelSessions[deviceKey(id)];
+    if (session?.busy == true) throw StateError('设备正在执行命令，请完成后再修改配置');
+    _modelSessions.remove(deviceKey(id))?.dispose();
   }
 
-  static final Device _emptyDevice = At5Client(id: '', name: '未选择设备');
+  bool get devicesBusy => _modelSessions.values.any((session) => session.busy);
+  bool get changingDeviceContext => _changingContext || _remoteStarting;
 
-  Map<Type, DeviceFunctionBinding> get controlBindings {
-    final session = _genericSession;
-    return session == null ? _at5Bindings : _genericBindings(session);
-  }
-
-  /// 通用设备的绑定直接读写它自己的功能状态，命令按配置编码后经 MQTT 下发
-  Map<Type, DeviceFunctionBinding> _genericBindings(
-    GenericDeviceSession session,
-  ) {
-    final device = session.device;
-    final bindings = <Type, DeviceFunctionBinding>{};
-    for (final function in device.supportFunctions) {
-      switch (function) {
-        case PowerFunction():
-          bindings[PowerFunction] = DeviceFunctionBinding<bool>(
-            read: () =>
-                device.status[ConfigurableFunction.power] as bool? ?? false,
-            preview: (_) {},
-            commit: (value) =>
-                _commitGeneric(session, ConfigurableFunction.power, value),
-          );
-        case LightFunction():
-          bindings[LightFunction] = LightControlBinding(
-            read: () => _genericLight(),
-            preview: (value) {
-              if (applying) return;
-              _editingLight = true;
-              session.applyPreview(ConfigurableFunction.light, value.toJson());
-              notifyListeners();
-            },
-            commit: (value) => _commitGeneric(
-              session,
-              ConfigurableFunction.light,
-              value.toJson(),
-            ),
-            outputLimit: outputLimit,
-            beginBrightness: () {
-              _editingLight = true;
-              _masterBrightnessSource = _genericLight();
-            },
-            changeBrightness: (value) {
-              if (applying) return;
-              _editingLight = true;
-              final next = (_masterBrightnessSource ?? _genericLight())
-                  .withPowerPercent(value.round(), limit: outputLimit);
-              session.applyPreview(ConfigurableFunction.light, next.toJson());
-              notifyListeners();
-            },
-            commitBrightness: () {
-              _masterBrightnessSource = null;
-              return _commitGeneric(
-                session,
-                ConfigurableFunction.light,
-                _genericLight(),
-              );
-            },
-          );
-        case TemperatureFunction():
-          bindings[TemperatureFunction] = DeviceFunctionBinding<double>(
-            read: () =>
-                (device.status[ConfigurableFunction.temperature] as num?)
-                    ?.toDouble() ??
-                0,
-            preview: (value) => session.applyPreview(
-              ConfigurableFunction.temperature,
-              value,
-            ),
-            commit: (value) => _commitGeneric(
-              session,
-              ConfigurableFunction.temperature,
-              value,
-            ),
-          );
-        case FanSpeedFunction():
-          bindings[FanSpeedFunction] = DeviceFunctionBinding<FanSpeed>(
-            read: () =>
-                FanSpeed.valueOf(
-                  device.status[ConfigurableFunction.fanSpeed],
-                ) ??
-                FanSpeed.low,
-            preview: (_) {},
-            commit: (value) => _commitGeneric(
-              session,
-              ConfigurableFunction.fanSpeed,
-              value.wire,
-            ),
-          );
-        case FanSpeedFunction2():
-          bindings[FanSpeedFunction2] = DeviceFunctionBinding<int>(
-            read: () =>
-                (device.status[ConfigurableFunction.fanSpeedPercent] as num?)
-                    ?.toInt() ??
-                0,
-            preview: (_) {},
-            commit: (value) => _commitGeneric(
-              session,
-              ConfigurableFunction.fanSpeedPercent,
-              value,
-            ),
-          );
-      }
+  void _requireIdle() {
+    if (changingDeviceContext || devicesBusy) {
+      throw StateError('设备正在执行命令，请完成后再修改配置');
     }
-    return bindings;
   }
 
-  LightState _genericLight() {
-    final raw = _genericSession?.device.status[ConfigurableFunction.light];
-    if (raw is! Map) return lightState;
-    int channel(LightChannel key) => (raw[key.wire] as num?)?.toInt() ?? 0;
-    return LightState(
-      red: channel(LightChannel.red),
-      green: channel(LightChannel.green),
-      blue: channel(LightChannel.blue),
-      white: channel(LightChannel.white),
-      uv: channel(LightChannel.uv),
-    );
+  Future<void> _disposeSessions() async {
+    for (final session in _modelSessions.values) {
+      session.dispose();
+    }
+    _modelSessions.clear();
   }
 
-  Future<void> _commitGeneric(
-    GenericDeviceSession session,
-    ConfigurableFunction type,
-    Object value,
-  ) async {
-    if (applying || _disposed) return;
-    if (!session.ready) {
-      commandStatus = '网关未连接，设置尚未下发';
-      notifyListeners();
+  /// 首页只展示真实回报，默认值与最近一次写入不代表开关的实际状态
+  bool? reportedPowerFor(String id) {
+    final session = _modelSessions[deviceKey(id)];
+    final state = session?.reported['power'];
+    if (session == null || state == null) return null;
+    if (!session.isFresh(state) || state.value is! bool) return null;
+    return state.value as bool;
+  }
+
+  /// 当前控制设备的属性现值，用于“用当前灯光更新配色”
+  Map<String, Object?> get currentProperties {
+    final id = selectedDeviceId;
+    if (id == null) return const {};
+    return currentPropertiesFor(id);
+  }
+
+  /// 当前设备可写属性的现值：新鲜上报优先，其次是刚下发的期望值
+  Map<String, Object?> currentPropertiesFor(String id) {
+    final session = deviceSessionFor(id);
+    final values = <String, Object?>{};
+    for (final entry in session.model.properties.entries) {
+      if (!entry.value.canWrite) continue;
+      final value = _currentValue(session, entry.key);
+      if (value != null) values[entry.key] = value;
+    }
+    return values;
+  }
+
+  static Object? _currentValue(DeviceModelSession session, String property) {
+    final state = session.reported[property];
+    if (state != null && session.isFresh(state)) return state.value;
+    return session.desired[property] ??
+        session.model.properties[property]?.value.defaultValue;
+  }
+
+  /// 首页快捷开关：按设备模型写入 power 属性，回报由设备侧通知更新
+  Future<void> togglePowerFor(String id) async {
+    if (_disposed) return;
+    final session = deviceSessionFor(id);
+    if (!session.canWrite('power')) {
+      _publishMessage('设备模型 ${session.model.id} 未定义可写的 power 属性');
       return;
     }
-    applying = true;
-    commandStatus = '正在等待网关执行确认…';
-    notifyListeners();
     try {
-      final ok = await session.executeFunction(type, value);
-      if (_disposed) return;
-      commandStatus = ok ? '网关已下发，设备回报后更新状态' : '设备拒绝了本次设置';
-      _editingLight = false;
+      final current = _currentValue(session, 'power');
+      final record = await session.writeProperty('power', current != true);
+      _publishMessage('开关已下发 · ${_confirmationLabel(record)}');
     } catch (error) {
-      commandStatus = error is RemoteCommandRejected
-          ? error.message
-          : '执行结果未确认：$error';
-      _publishMessage(commandStatus!);
-    } finally {
-      applying = false;
-      if (!_disposed) notifyListeners();
+      _publishMessage('执行结果未确认：$error');
     }
   }
-
-  Map<Type, DeviceFunctionBinding> get _at5Bindings => {
-    PowerFunction: DeviceFunctionBinding<bool>(
-      read: () => powerEnabled,
-      preview: (_) {},
-      commit: (value) async {
-        if (value != powerEnabled) await togglePower();
-      },
-    ),
-    LightFunction: LightControlBinding(
-      read: () => lightState,
-      preview: (value) {
-        if (applying) return;
-        _editingLight = true;
-        lightState = value.limitedTo(outputLimit);
-        notifyListeners();
-      },
-      commit: (_) => commitLightState(),
-      outputLimit: outputLimit,
-      beginBrightness: beginMasterBrightnessChange,
-      changeBrightness: setMasterBrightness,
-      commitBrightness: commitMasterBrightness,
-    ),
-    TemperatureFunction: DeviceFunctionBinding<double>(
-      read: () => temperature.toDouble(),
-      preview: setTemperature,
-      commit: (_) => commitTemperatureAndFan(),
-    ),
-    FanSpeedFunction: DeviceFunctionBinding<FanSpeed>(
-      read: () => fanSpeed,
-      preview: (_) {},
-      commit: (value) => setFanHighSpeed(value == FanSpeed.high),
-    ),
-  };
-
-  int get brightness => lightState.powerPercent;
-
-  bool get fanHighSpeed => fanSpeed == FanSpeed.high;
 
   int get nextScheduleId => schedules.isEmpty
       ? 1
@@ -319,26 +201,35 @@ class AppController extends ChangeNotifier {
       if (!_disposed) _publishMessage('远程配置读取失败，请在设备页重新配置');
     } finally {
       _remoteStarting = false;
+      if (!_disposed) notifyListeners();
     }
   }
 
   Future<void> saveRemoteSettings(RemoteSettings settings) async {
-    if (applying) throw StateError('请等待当前命令完成');
+    _requireIdle();
     settings.validate();
-    await _remoteStore.write(settings);
-    if (_disposed) return;
-    remoteSettings = settings;
-    _editingLight = false;
-    notifyListeners();
-    await _connectRemote(settings);
+    _changingContext = true;
+    try {
+      await _remoteStore.write(settings);
+      if (_disposed) return;
+      await _connectRemote(settings);
+    } finally {
+      _changingContext = false;
+      if (!_disposed) notifyListeners();
+    }
   }
 
   /// 启动和重新配置共用恢复流程，避免清空登记缓存后丢失控制对象
   Future<void> _connectRemote(RemoteSettings settings) async {
+    await _disposeSessions();
+    await _remote.disconnect();
+    if (_disposed) return;
+    remoteSettings = settings;
+    _database.bindLegacyGateway(settings.gatewayId);
     _registry.reset();
     final selected = settings.bluetoothDeviceId;
     _registry.select(selected.isEmpty ? null : selected);
-    await _syncDeviceSession(_registry.selectedDeviceId);
+    _reloadData();
     if (_disposed) return;
     notifyListeners();
     if (settings.enabled) {
@@ -354,19 +245,25 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> clearRemoteSettings() async {
-    if (applying) throw StateError('请等待当前命令完成');
-    await _remoteStore.clear();
-    if (_disposed) return;
-    remoteSettings = null;
-    _registry.reset();
-    await _syncDeviceSession(null);
-    await KeepAliveService.stop();
-    await _remote.disconnect();
+    _requireIdle();
+    _changingContext = true;
+    try {
+      await _remoteStore.clear();
+      if (_disposed) return;
+      await _disposeSessions();
+      await _remote.disconnect();
+      remoteSettings = null;
+      _registry.reset();
+      _reloadData();
+      await KeepAliveService.stop();
+    } finally {
+      _changingContext = false;
+      if (!_disposed) notifyListeners();
+    }
     if (!_disposed) notifyListeners();
   }
 
   Future<void> reconnectRemote() async {
-    if (applying) return;
     final settings = remoteSettings;
     if (settings != null && settings.enabled) await _remote.connect(settings);
   }
@@ -378,132 +275,93 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> refreshDeviceState() async {
-    if (applying) return;
-    _editingLight = false;
     try {
       await _remote.requestState();
-      commandStatus = '网关状态已刷新；灯光参数显示最后设置值';
     } catch (error) {
       _publishMessage('刷新失败：$error');
     }
     if (!_disposed) notifyListeners();
   }
 
+  /// 输出上限不再是本机面板状态
+  ///
+  /// 设备模型声明了可写的输出上限属性时直接写属性，否则把当前数值属性
+  /// 按上限收敛后写回设备，界面显示一律以设备回报为准
   Future<void> setOutputLimit(int value) async {
-    if (applying) return;
-    outputLimit = value.clamp(1, 100);
-    lightState = lightState.limitedTo(outputLimit);
-    _saveControlSettings();
-    notifyListeners();
-    if (isConnected) {
-      await _runDeviceAction(DeviceCommand.setLimit, _lightPayload());
-    }
-  }
-
-  void beginMasterBrightnessChange() {
-    _editingLight = true;
-    _masterBrightnessSource = lightState;
-  }
-
-  void setMasterBrightness(double value) {
-    if (applying) return;
-    _editingLight = true;
-    lightState = (_masterBrightnessSource ?? lightState).withPowerPercent(
-      value.round(),
-      limit: outputLimit,
-    );
-    notifyListeners();
-  }
-
-  Future<void> commitMasterBrightness() {
-    _masterBrightnessSource = null;
-    return commitLightState();
-  }
-
-  void setChannel(LightChannel channel, double value) {
-    if (applying) return;
-    _editingLight = true;
-    final level = value.round().clamp(0, outputLimit);
-    lightState = lightState.withChannel(channel, level);
-    notifyListeners();
-  }
-
-  Map<String, Object?> _lightPayload() => DeviceStatePayload(
-    channels: lightState.limitedTo(outputLimit),
-    power: powerEnabled,
-    temperature: temperature,
-    fanSpeed: fanSpeed,
-    outputLimit: outputLimit,
-  ).toJson();
-
-  Future<void> commitLightState() async {
-    if (applying) return;
-    lightState = lightState.limitedTo(outputLimit);
-    _saveControlSettings();
-    await _runDeviceAction(DeviceCommand.setState, _lightPayload());
-  }
-
-  void setTemperature(double value) {
-    if (applying) return;
-    _editingLight = true;
-    temperature = value.round();
-    notifyListeners();
-  }
-
-  Future<void> commitTemperatureAndFan() async {
-    _saveControlSettings();
-    await _runDeviceAction(DeviceCommand.setState, _lightPayload());
-  }
-
-  Future<void> setFanHighSpeed(bool highSpeed) async {
-    if (applying) return;
-    _editingLight = true;
-    fanSpeed = highSpeed ? FanSpeed.high : FanSpeed.low;
-    notifyListeners();
-    await commitTemperatureAndFan();
-  }
-
-  Future<void> restoreControlDefaults() async {
-    if (applying) return;
-    final defaults = ControlSettings.defaults;
-    lightState = defaults.lightState.limitedTo(outputLimit);
-    powerEnabled = defaults.powerEnabled;
-    temperature = defaults.temperature;
-    fanSpeed = defaults.fanSpeed;
-    _saveControlSettings();
-    notifyListeners();
-    if (isConnected) {
-      await _runDeviceAction(
-        DeviceCommand.setState,
-        _lightPayload(),
-        successMessage: '控制参数已恢复默认值',
-      );
-    } else {
-      _publishMessage('控制参数已恢复默认值');
-    }
-  }
-
-  Future<void> togglePower() async {
-    if (applying) return;
-    _editingLight = true;
-    powerEnabled = !powerEnabled;
-    notifyListeners();
-    await commitLightState();
-  }
-
-  Future<void> applyScene(ScenePreset scene) async {
-    if (applying) return;
-    _editingLight = true;
-    lightState = scene.state.limitedTo(outputLimit);
-    powerEnabled = true;
-    _saveControlSettings();
-    notifyListeners();
-    if (!isConnected) {
-      commandStatus = '配色已载入本机，连接鱼缸灯后点击配色应用';
-      notifyListeners();
+    final id = selectedDeviceId;
+    if (id == null) {
+      _publishMessage('请先选择要控制的设备');
       return;
     }
-    await commitLightState();
+    final limit = value.clamp(1, 100);
+    final session = deviceSessionFor(id);
+    final writes = <ModelPropertyWrite>[];
+    if (session.canWrite(outputLimitProperty)) {
+      writes.add(ModelPropertyWrite(outputLimitProperty, limit));
+    } else {
+      for (final entry in session.model.properties.entries) {
+        if (!session.canWrite(entry.key)) continue;
+        final current = _currentValue(session, entry.key);
+        if (current is! Map) continue;
+        final clamped = _clampNumbers(current, limit);
+        if (clamped != null) writes.add(ModelPropertyWrite(entry.key, clamped));
+      }
+    }
+    if (writes.isEmpty) {
+      _publishMessage('当前设备数值未超过输出上限，无需下发');
+      return;
+    }
+    try {
+      final record = await session.writeProperties(writes);
+      _publishMessage('输出上限已下发 · ${_confirmationLabel(record)}');
+    } catch (error) {
+      _publishMessage('输出上限下发未确认：$error');
+    }
+  }
+
+  /// 把对象属性里超过上限的数值字段收敛到上限，没有变化时返回 null
+  static Map<String, Object?>? _clampNumbers(
+    Map<Object?, Object?> value,
+    int limit,
+  ) {
+    final result = <String, Object?>{};
+    var changed = false;
+    for (final entry in value.entries) {
+      final item = entry.value;
+      if (item is! num) {
+        result['${entry.key}'] = item;
+        continue;
+      }
+      final next = item.round().clamp(0, limit);
+      if (next != item.round()) changed = true;
+      result['${entry.key}'] = next;
+    }
+    return changed ? result : null;
+  }
+
+  /// 应用配色：把配色保存的属性值经设备模型写进当前设备
+  Future<void> applyScene(ScenePreset scene) async {
+    final id = selectedDeviceId;
+    if (id == null) {
+      _publishMessage('请先选择要控制的设备');
+      return;
+    }
+    final session = deviceSessionFor(id);
+    final writes = <ModelPropertyWrite>[
+      for (final entry in scene.properties.entries)
+        if (session.canWrite(entry.key))
+          ModelPropertyWrite(entry.key, entry.value),
+    ];
+    if (writes.isEmpty) {
+      _publishMessage('设备模型 ${session.model.id} 不支持该配色的属性');
+      return;
+    }
+    try {
+      final record = await session.writeProperties(writes);
+      _publishMessage('配色已下发 · ${_confirmationLabel(record)}');
+    } catch (error) {
+      _publishMessage('配色下发未确认：$error');
+    }
   }
 
   void saveScene(ScenePreset scene) {
@@ -531,48 +389,39 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
-  DeviceConfiguration configurationForDevice(String? id) {
-    final existing = deviceConfigurations
-        .where((item) => item.id == id)
-        .firstOrNull;
-    if (existing != null) return existing;
-    final saved = savedDevices.where((item) => item.id == id).firstOrNull;
-    final at5 = saved?.model != DeviceModel.generic;
-    final types = <ConfigurableFunction>[
-      if (at5) ConfigurableFunction.power,
-      if (at5) ConfigurableFunction.light,
-      if (at5) ConfigurableFunction.temperature,
-      if (at5) ConfigurableFunction.fanSpeed,
-      if (at5) ConfigurableFunction.timer,
-    ];
-    return DeviceConfiguration.fromJson({
-      'id': id ?? 'device_${DateTime.now().microsecondsSinceEpoch}',
-      'name': saved?.name ?? '新设备',
-      'functions': [
-        for (final type in types) {'type': type.wire},
-      ],
-    });
-  }
-
   void saveDeviceConfiguration(
     DeviceConfiguration configuration, {
     String? previousId,
   }) {
-    _database.saveDeviceConfiguration(configuration, previousId: previousId);
-    deviceConfigurations = _database.loadDeviceConfigurations();
+    _requireIdle();
+    _database.saveDeviceConfiguration(
+      configuration.withGateway(gatewayId),
+      previousId: previousId,
+    );
+    for (final id in {configuration.id, ?previousId}) {
+      _removeModelSession(id);
+    }
+    deviceConfigurations = _database.loadDeviceConfigurations(
+      gatewayId: gatewayId,
+    );
     notifyListeners();
   }
 
   void deleteDeviceConfiguration(String id) {
-    _database.deleteDeviceConfiguration(id);
-    deviceConfigurations = _database.loadDeviceConfigurations();
+    _requireIdle();
+    _database.deleteDeviceConfiguration(id, gatewayId: gatewayId);
+    _removeModelSession(id);
+    deviceConfigurations = _database.loadDeviceConfigurations(
+      gatewayId: gatewayId,
+    );
     notifyListeners();
   }
 
   Future<void> exportData({Rect? sharePositionOrigin}) async {
     try {
-      final data = const JsonEncoder.withIndent('  ')
-          .convert(_database.exportData().toJson());
+      final data = const JsonEncoder.withIndent(
+        '  ',
+      ).convert(_database.exportData().toJson());
       final now = DateTime.now();
       final fileName =
           'light_backup_${now.year}${_two(now.month)}${_two(now.day)}_${_two(now.hour)}${_two(now.minute)}.json';
@@ -636,17 +485,14 @@ class AppController extends ChangeNotifier {
             id: createSceneId(),
             name: '${scene.name}（导入）',
             subtitle: scene.subtitle,
-            temperature: scene.temperature,
-            brightness: scene.brightness,
             accentValue: scene.accentValue,
-            state: scene.state,
+            properties: scene.properties,
           );
         }
         _database.saveScene(scene);
         scenes = _database.loadScenes();
       } else {
-        _database.replaceData(AppDataBundle.fromJson(json));
-        _reloadData();
+        await replaceData(AppDataBundle.fromJson(json));
       }
       _publishMessage('导入完成');
     } catch (error) {
@@ -655,85 +501,76 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> resetAllData() async {
-    _database.resetData();
-    _reloadData();
-    _publishMessage('本地数据已恢复为默认状态');
+    _requireIdle();
+    _changingContext = true;
+    try {
+      _database.resetData();
+      await _disposeSessions();
+      _reloadData();
+      _publishMessage('本地数据已恢复为默认状态');
+    } finally {
+      _changingContext = false;
+      if (!_disposed) notifyListeners();
+    }
+  }
+
+  Future<void> replaceData(AppDataBundle data) async {
+    _requireIdle();
+    _changingContext = true;
+    try {
+      _database.replaceData(data, legacyGatewayId: gatewayId);
+      await _disposeSessions();
+      _reloadData();
+    } finally {
+      _changingContext = false;
+      if (!_disposed) notifyListeners();
+    }
   }
 
   Future<void> startScan() => _registry.startScan();
   Future<void> stopScan() => _registry.stopScan();
 
   Future<void> connect(String deviceId) async {
-    if (applying) throw StateError('请等待当前命令完成');
+    _requireIdle();
     await _registry.connectDevice(deviceId);
   }
 
-  Future<void> selectDevice(
-    String deviceId,
-    String name, {
-    DeviceModel model = DeviceModel.at5,
-  }) async {
-    if (applying) throw StateError('请等待当前命令完成');
-    final settings = remoteSettings;
-    if (settings == null) throw StateError('请先配置 MQTT');
-    final updated = settings.withDevice(deviceId);
-    await _remoteStore.write(updated);
-    remoteSettings = updated;
-    _editingLight = false;
-    _database.saveDevice(
-      SavedDevice(
-        id: deviceId,
-        name: name,
-        model: model,
-        room: '网关设备',
-        lastConnectedAt: DateTime.now(),
-      ),
-    );
-    savedDevices = _database.loadDevices();
-    _registry.select(deviceId);
-    await _syncDeviceSession(deviceId);
-    // 通用设备的初始值来自它自己的配置，切换后要重新载入本机控制参数
-    _reloadData();
-    notifyListeners();
-  }
-
-  /// 为选中的设备建立会话：有通用配置时用配置驱动，否则按 AT5 处理
-  ///
-  /// 配置没有声明命令时不建立会话，设备保持只读预览。
-  Future<void> _syncDeviceSession(String? deviceId) async {
-    await _genericSession?.dispose();
-    await _at5Session?.dispose();
-    _genericSession = null;
-    _at5Session = null;
-    if (deviceId == null) return;
-    final matches = deviceConfigurations.where((item) => item.id == deviceId);
-    if (matches.isEmpty) {
-      _at5Session = DeviceRemoteSession(
-        gateway: _remote,
-        codec: _defaultControlDevice,
-        deviceId: deviceId,
+  Future<void> selectDevice(String deviceId, String name) async {
+    _requireIdle();
+    _changingContext = true;
+    try {
+      final settings = remoteSettings;
+      if (settings == null) throw StateError('请先配置 MQTT');
+      final updated = settings.withDevice(deviceId);
+      await _remoteStore.write(updated);
+      remoteSettings = updated;
+      _database.saveDevice(
+        SavedDevice(
+          id: deviceId,
+          gatewayId: gatewayId,
+          name: name,
+          room: '网关设备',
+          lastConnectedAt: DateTime.now(),
+        ),
       );
-      return;
+      savedDevices = _database.loadDevices(gatewayId: gatewayId);
+      _registry.select(deviceId);
+      // 选中设备即绑定它自己的设备模型会话，命令与回报都从这里走
+      deviceSessionFor(deviceId);
+      notifyListeners();
+    } finally {
+      _changingContext = false;
+      if (!_disposed) notifyListeners();
     }
-    final session = GenericDeviceSession(
-      client: _remote.client,
-      config: matches.first.toJson(),
-      deviceId: deviceId,
-    );
-    if (!session.device.supportsRemoteControl) {
-      await session.dispose();
-      return;
-    }
-    _genericSession = session;
   }
 
   Future<void> disconnect() async {
-    if (applying) return;
     final id = selectedDeviceId;
     if (id != null) await _registry.disconnectDevice(id);
   }
 
   Future<void> clearSelectedDevice() async {
+    _requireIdle();
     final settings = remoteSettings;
     if (settings != null) {
       final updated = settings.withDevice('');
@@ -741,129 +578,95 @@ class AppController extends ChangeNotifier {
       remoteSettings = updated;
     }
     _registry.select(null);
-    await _syncDeviceSession(null);
+    _reloadData();
     if (!_disposed) notifyListeners();
   }
 
+  /// 开关计划：先保存本机计划，再把定时槽位属性值下发给当前设备
   Future<void> toggleSchedule(SchedulePlan plan) async {
     final updated = plan.copyWith(enabled: !plan.enabled);
     _database.saveSchedule(updated);
     schedules = _database.loadSchedules();
     notifyListeners();
 
-    if (isConnected && updated.id <= 2) {
-      final config = TimerConfig(
-        index: updated.id,
-        enabled: updated.enabled,
-        startHour: updated.startHour,
-        startMinute: updated.startMinute,
-        endHour: updated.endHour,
-        endMinute: updated.endMinute,
-        sunriseSunsetEnabled: true,
-        sunriseMinutes: 30,
-        sunsetMinutes: 30,
+    final id = selectedDeviceId;
+    if (id == null || !isConnected) {
+      _publishMessage('计划已保存在本机，连接设备后再下发');
+      return;
+    }
+    final session = deviceSessionFor(id);
+    final writes = <ModelPropertyWrite>[
+      if (session.canWrite('time')) _timeWrite(),
+      for (final entry in updated.properties.entries)
+        if (session.canWrite(entry.key))
+          ModelPropertyWrite(entry.key, entry.value),
+    ];
+    final unsupported = updated.properties.keys.where(
+      (property) => !session.canWrite(property),
+    );
+    if (unsupported.isNotEmpty) {
+      _publishMessage(
+        '设备模型 ${session.model.id} 不支持属性 ${unsupported.join('、')}，计划只保存在本机',
       );
-      await _runDeviceAction(
-        DeviceCommand.setTimer,
-        config.toJson(),
-        successMessage: '设备定时槽位已更新',
-      );
+      return;
+    }
+    try {
+      await session.writeProperties(writes);
+      _publishMessage('设备定时槽位已更新');
+    } catch (error) {
+      _publishMessage('计划下发未确认：$error');
     }
   }
 
   @override
   void dispose() {
     _disposed = true;
+    unawaited(_disposeSessions());
     _registrySubscription?.cancel();
-    _genericSession?.dispose();
-    _at5Session?.dispose();
     _registry.dispose();
     _remote.dispose();
     _database.close();
-    _defaultControlDevice.dispose();
     super.dispose();
-  }
-
-  /// 把一次控制参数下发到当前设备
-  ///
-  /// 通用设备的会话自己编码并回报结果，其它设备交给会话自己的下发方法。
-  Future<void> _runDeviceAction(
-    DeviceCommand command,
-    Map<String, Object?> payload, {
-    String? successMessage,
-  }) async {
-    if (applying || _disposed) return;
-    if (controlRoute == ControlRoute.offline) {
-      commandStatus = '设备离线，设置尚未下发';
-      notifyListeners();
-      return;
-    }
-    final generic = _genericSession;
-    final at5 = _at5Session;
-    if (generic == null && at5 == null) {
-      commandStatus = '请先选择要控制的设备';
-      notifyListeners();
-      return;
-    }
-    applying = true;
-    commandStatus = '正在等待网关执行确认…';
-    notifyListeners();
-    try {
-      final result = generic == null
-          ? await at5!.execute(command, payload)
-          : await generic.execute(command, payload);
-      if (_disposed) return;
-      commandStatus = result.confirmation == RemoteConfirmation.written
-          ? '网关已写入灯具，尚无状态回读'
-          : '网关已收到灯具确认';
-      if (!_disposed && successMessage != null) {
-        _publishMessage('$successMessage · $commandStatus');
-      }
-    } catch (error) {
-      commandStatus = error is RemoteCommandRejected
-          ? error.message
-          : '执行结果未确认，请刷新状态后再操作';
-      if (!_disposed && successMessage != null) _publishMessage(commandStatus!);
-    } finally {
-      applying = false;
-      if (!_disposed) notifyListeners();
-    }
   }
 
   void _onRegistryChanged(RemoteSnapshot snapshot) {
     if (_disposed) return;
-    // 远端状态变化只驱动界面刷新，设备状态由各设备的会话自己维护
+    // 远端状态变化只驱动界面刷新，设备属性由各设备的会话自己维护
     notifyListeners();
   }
 
-  void _saveControlSettings() {
-    _database.saveSettings(
-      ControlSettings(
-        lightState: lightState,
-        powerEnabled: powerEnabled,
-        temperature: temperature,
-        fanSpeed: fanSpeed,
-        outputLimit: outputLimit,
-      ),
-    );
-  }
-
   void _reloadData() {
-    deviceConfigurations = _database.loadDeviceConfigurations();
+    deviceConfigurations = _database.loadDeviceConfigurations(
+      gatewayId: gatewayId,
+    );
     scenes = _database.loadScenes();
     schedules = _database.loadSchedules();
-    savedDevices = _database.loadDevices();
-    final settings = _database.loadSettings();
-    outputLimit = settings.outputLimit;
-    lightState = settings.lightState.limitedTo(outputLimit);
-    powerEnabled = settings.powerEnabled;
-    temperature = settings.temperature;
-    fanSpeed = settings.fanSpeed;
+    savedDevices = _database.loadDevices(gatewayId: gatewayId);
     notifyListeners();
   }
 
   String? _savedName(String id) =>
       savedDevices.where((item) => item.id == id).firstOrNull?.name;
+
+  /// 下发定时前先对时，设备按本机时间判断时段
+  static ModelPropertyWrite _timeWrite() {
+    final now = DateTime.now();
+    return ModelPropertyWrite('time', {
+      'hour': now.hour,
+      'minute': now.minute,
+      'second': now.second,
+    });
+  }
+
+  static String _confirmationLabel(ModelCommandRecord record) =>
+      switch (record.state) {
+        ModelCommandState.deviceState => '设备已回报状态',
+        ModelCommandState.deviceAck => '设备已确认',
+        ModelCommandState.read => '已读取',
+        ModelCommandState.failed => '执行失败',
+        ModelCommandState.unknown => '结果未确认',
+        _ => '网关已写入，尚无状态回读',
+      };
 
   void _publishMessage(String message) {
     if (_disposed) return;

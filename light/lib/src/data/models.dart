@@ -1,64 +1,62 @@
-import 'package:light/src/core/functions/fan_speed.dart';
-import 'package:light/src/core/functions/light.dart';
-import 'package:light/src/core/protocol/wire.dart';
-
 import 'device_configuration.dart';
+import 'device_key.dart';
 
-/// App 本地记录的设备型号，决定默认按哪套协议控制
-enum DeviceModel implements WireEnum {
-  /// AT5 灯具，使用 App 内置的报文格式
-  at5('AT5'),
-
-  /// 配置驱动的通用设备
-  generic('GENERIC');
-
-  const DeviceModel(this.wire);
-
-  @override
-  final String wire;
-
-  static DeviceModel? valueOf(Object? raw) => wireValueOf(values, raw);
-
-  /// 读取本地记录里的型号，未知取值按 AT5 处理
-  static DeviceModel parse(Object? raw) => valueOf(raw) ?? at5;
-}
-
+/// 配色：直接保存设备模型里的属性值
+///
+/// 应用配色就是把这里的属性值经 DeviceModelSession 写进设备，
+/// 因此本机不再保存灯光面板状态，也不再按设备私有结构序列化
 class ScenePreset {
   const ScenePreset({
     required this.id,
     required this.name,
     required this.subtitle,
-    required this.temperature,
-    required this.brightness,
     required this.accentValue,
-    required this.state,
+    required this.properties,
   });
 
   final String id;
   final String name;
   final String subtitle;
-  final int temperature;
-  final int brightness;
   final int accentValue;
-  final LightState state;
+
+  /// 属性值，键是设备模型里的属性标识
+  final Map<String, Object?> properties;
 
   ScenePreset copyWith({
     String? name,
     String? subtitle,
-    int? temperature,
-    int? brightness,
     int? accentValue,
-    LightState? state,
+    Map<String, Object?>? properties,
   }) {
     return ScenePreset(
       id: id,
       name: name ?? this.name,
       subtitle: subtitle ?? this.subtitle,
-      temperature: temperature ?? this.temperature,
-      brightness: brightness ?? this.brightness,
       accentValue: accentValue ?? this.accentValue,
-      state: state ?? this.state,
+      properties: properties ?? this.properties,
     );
+  }
+
+  /// 颜色通道：取第一个数值型对象属性，供卡片展示与配色模板使用
+  Map<String, int> get channels {
+    for (final value in properties.values) {
+      if (value is! Map) continue;
+      final channels = <String, int>{};
+      for (final entry in value.entries) {
+        final item = entry.value;
+        if (item is num) channels['${entry.key}'] = item.round();
+      }
+      if (channels.isNotEmpty) return channels;
+    }
+    return const {};
+  }
+
+  /// 通道平均值，只用于卡片展示
+  int get brightness {
+    final values = channels.values;
+    if (values.isEmpty) return 0;
+    return (values.reduce((left, right) => left + right) / values.length)
+        .round();
   }
 
   Map<String, Object?> toJson() {
@@ -66,10 +64,8 @@ class ScenePreset {
       'id': id,
       'name': name,
       'subtitle': subtitle,
-      'temperature': temperature,
-      'brightness': brightness,
       'accentValue': accentValue,
-      'state': _lightStateToJson(state),
+      'properties': properties,
     };
   }
 
@@ -78,34 +74,94 @@ class ScenePreset {
       id: _string(json['id']),
       name: _string(json['name']),
       subtitle: _string(json['subtitle']),
-      temperature: _boundedInteger(json['temperature'], 4000, 2700, 6500),
-      brightness: _boundedInteger(json['brightness'], 50, 0, 100),
       accentValue: _integer(json['accentValue'], 0xFF0878F9),
-      state: _lightStateFromJson(_map(json['state'])),
+      properties: _sceneProperties(json),
     );
+  }
+
+  /// 旧版本把五路数值写在 state 字段里，这里转换成属性值
+  static Map<String, Object?> _sceneProperties(Map<String, Object?> json) {
+    final properties = _map(json['properties']);
+    if (properties.isNotEmpty) return properties;
+    final state = _map(json['state']);
+    if (state.isEmpty) return const {};
+    return {
+      'power': true,
+      'channels': {
+        for (final key in _legacyChannelKeys)
+          key: _boundedInteger(state[key], 0, 0, 100),
+      },
+    };
   }
 }
 
+/// 旧版本配色里的五路通道名，与内置 AT5 模型的 channels 字段一致
+const List<String> _legacyChannelKeys = ['red', 'green', 'blue', 'white', 'uv'];
+
+/// 计划：定时槽位同样以属性值保存，开关计划时按属性下发
 class SchedulePlan {
   const SchedulePlan({
     required this.id,
-    required this.enabled,
-    required this.startHour,
-    required this.startMinute,
-    required this.endHour,
-    required this.endMinute,
     required this.repeatLabel,
     required this.sceneId,
+    required this.properties,
   });
 
+  /// 定时槽位的属性标识
+  static const String timerProperty = 'timer';
+
   final int id;
-  final bool enabled;
-  final int startHour;
-  final int startMinute;
-  final int endHour;
-  final int endMinute;
   final String repeatLabel;
   final String sceneId;
+
+  /// 属性值，键是设备模型里的属性标识
+  final Map<String, Object?> properties;
+
+  Map<String, Object?> get timer => _map(properties[timerProperty]);
+
+  bool get enabled => timer['enabled'] == true;
+
+  int get startHour => _integer(timer['startHour']);
+
+  int get startMinute => _integer(timer['startMinute']);
+
+  int get endHour => _integer(timer['endHour']);
+
+  int get endMinute => _integer(timer['endMinute']);
+
+  String get timeLabel =>
+      '${_two(startHour)}:${_two(startMinute)} – ${_two(endHour)}:${_two(endMinute)}';
+
+  /// 用界面字段拼出一份定时槽位属性值
+  factory SchedulePlan.fromFields({
+    required int id,
+    required bool enabled,
+    required int startHour,
+    required int startMinute,
+    required int endHour,
+    required int endMinute,
+    required String repeatLabel,
+    required String sceneId,
+  }) {
+    return SchedulePlan(
+      id: id,
+      repeatLabel: repeatLabel,
+      sceneId: sceneId,
+      properties: {
+        timerProperty: {
+          'index': id,
+          'enabled': enabled,
+          'startHour': startHour,
+          'startMinute': startMinute,
+          'endHour': endHour,
+          'endMinute': endMinute,
+          'sunriseSunsetEnabled': true,
+          'sunriseMinutes': 30,
+          'sunsetMinutes': 30,
+        },
+      },
+    );
+  }
 
   SchedulePlan copyWith({
     bool? enabled,
@@ -116,36 +172,50 @@ class SchedulePlan {
     String? repeatLabel,
     String? sceneId,
   }) {
+    final current = timer;
     return SchedulePlan(
       id: id,
-      enabled: enabled ?? this.enabled,
-      startHour: startHour ?? this.startHour,
-      startMinute: startMinute ?? this.startMinute,
-      endHour: endHour ?? this.endHour,
-      endMinute: endMinute ?? this.endMinute,
       repeatLabel: repeatLabel ?? this.repeatLabel,
       sceneId: sceneId ?? this.sceneId,
+      properties: {
+        ...properties,
+        timerProperty: {
+          ...current,
+          'index': current['index'] ?? id,
+          'enabled': enabled ?? this.enabled,
+          'startHour': startHour ?? this.startHour,
+          'startMinute': startMinute ?? this.startMinute,
+          'endHour': endHour ?? this.endHour,
+          'endMinute': endMinute ?? this.endMinute,
+          'sunriseSunsetEnabled': current['sunriseSunsetEnabled'] ?? true,
+          'sunriseMinutes': current['sunriseMinutes'] ?? 30,
+          'sunsetMinutes': current['sunsetMinutes'] ?? 30,
+        },
+      },
     );
   }
-
-  String get timeLabel =>
-      '${_two(startHour)}:${_two(startMinute)} – ${_two(endHour)}:${_two(endMinute)}';
 
   Map<String, Object?> toJson() {
     return {
       'id': id,
-      'enabled': enabled,
-      'startHour': startHour,
-      'startMinute': startMinute,
-      'endHour': endHour,
-      'endMinute': endMinute,
       'repeatLabel': repeatLabel,
       'sceneId': sceneId,
+      'properties': properties,
     };
   }
 
   factory SchedulePlan.fromJson(Map<String, Object?> json) {
-    return SchedulePlan(
+    final properties = _map(json['properties']);
+    if (properties.isNotEmpty) {
+      return SchedulePlan(
+        id: _integer(json['id']),
+        repeatLabel: _string(json['repeatLabel'], '每天'),
+        sceneId: _string(json['sceneId']),
+        properties: properties,
+      );
+    }
+    // 旧版本把定时字段平铺在计划里，这里转换成定时槽位属性值
+    return SchedulePlan.fromFields(
       id: _integer(json['id']),
       enabled: _boolean(json['enabled'], true),
       startHour: _boundedInteger(json['startHour'], 0, 0, 23),
@@ -164,26 +234,28 @@ class SavedDevice {
   const SavedDevice({
     required this.id,
     required this.name,
-    required this.model,
     required this.room,
     required this.lastConnectedAt,
+    this.gatewayId = '',
   });
 
   final String id;
+  final String gatewayId;
+  DeviceKey get key => DeviceKey(gatewayId, id);
   final String name;
-  final DeviceModel model;
   final String room;
   final DateTime lastConnectedAt;
 
   SavedDevice copyWith({
+    String? gatewayId,
     String? name,
     String? room,
     DateTime? lastConnectedAt,
   }) {
     return SavedDevice(
       id: id,
+      gatewayId: gatewayId ?? this.gatewayId,
       name: name ?? this.name,
-      model: model,
       room: room ?? this.room,
       lastConnectedAt: lastConnectedAt ?? this.lastConnectedAt,
     );
@@ -192,8 +264,8 @@ class SavedDevice {
   Map<String, Object?> toJson() {
     return {
       'id': id,
+      'gatewayId': gatewayId,
       'name': name,
-      'model': model.wire,
       'room': room,
       'lastConnectedAt': lastConnectedAt.toIso8601String(),
     };
@@ -202,8 +274,8 @@ class SavedDevice {
   factory SavedDevice.fromJson(Map<String, Object?> json) {
     return SavedDevice(
       id: _string(json['id']),
+      gatewayId: _string(json['gatewayId']),
       name: _string(json['name']),
-      model: DeviceModel.parse(json['model']),
       room: _string(json['room'], '未分组'),
       lastConnectedAt:
           DateTime.tryParse(_string(json['lastConnectedAt'])) ??
@@ -212,62 +284,12 @@ class SavedDevice {
   }
 }
 
-class ControlSettings {
-  const ControlSettings({
-    required this.lightState,
-    required this.powerEnabled,
-    required this.temperature,
-    required this.fanSpeed,
-    this.outputLimit = 100,
-  });
-
-  static const defaults = ControlSettings(
-    lightState: LightState(red: 15, green: 15, blue: 17, white: 25, uv: 0),
-    powerEnabled: true,
-    temperature: 31,
-    fanSpeed: FanSpeed.low,
-  );
-
-  final LightState lightState;
-  final bool powerEnabled;
-  final int temperature;
-  final FanSpeed fanSpeed;
-  final int outputLimit;
-
-  Map<String, Object?> toJson() {
-    return {
-      'lightState': _lightStateToJson(lightState),
-      'powerEnabled': powerEnabled,
-      'temperature': temperature,
-      'fanSpeed': fanSpeed.value,
-      'outputLimit': outputLimit,
-      'outputLimitVersion': 1,
-    };
-  }
-
-  factory ControlSettings.fromJson(Map<String, Object?> json) {
-    return ControlSettings(
-      lightState: _lightStateFromJson(_map(json['lightState'])),
-      powerEnabled: _boolean(json['powerEnabled'], true),
-      temperature: _boundedInteger(json['temperature'], 31, 20, 80),
-      fanSpeed:
-          FanSpeed.fromValue(_integer(json['fanSpeed'], FanSpeed.low.value)) ??
-          FanSpeed.low,
-      // 旧版默认上限为 30，升级后使用完整范围并保留新版的手动设置
-      outputLimit:
-          _integer(json['outputLimitVersion']) < 1 && json['outputLimit'] == 30
-          ? 100
-          : _boundedInteger(json['outputLimit'], 100, 1, 100),
-    );
-  }
-}
-
+/// 本机数据：配色、计划、设备与设备模型，全部是设备无关的属性值
 class AppDataBundle {
   const AppDataBundle({
     required this.scenes,
     required this.schedules,
     required this.devices,
-    required this.settings,
     required this.exportedAt,
     this.deviceConfigurations = const [],
   });
@@ -275,28 +297,32 @@ class AppDataBundle {
   final List<ScenePreset> scenes;
   final List<SchedulePlan> schedules;
   final List<SavedDevice> devices;
-  final ControlSettings settings;
   final DateTime exportedAt;
   final List<DeviceConfiguration> deviceConfigurations;
 
   Map<String, Object?> toJson() {
     return {
-      'schemaVersion': 2,
+      'schemaVersion': 4,
       'kind': 'backup',
       'exportedAt': exportedAt.toIso8601String(),
       'scenes': scenes.map((item) => item.toJson()).toList(),
       'schedules': schedules.map((item) => item.toJson()).toList(),
       'devices': devices.map((item) => item.toJson()).toList(),
       'deviceConfigurations': deviceConfigurations
-          .map((item) => item.toJson())
+          .map(
+            (item) => {
+              'gatewayId': item.gatewayId,
+              'configuration': item.toJson(),
+            },
+          )
           .toList(),
-      'settings': settings.toJson(),
     };
   }
 
   factory AppDataBundle.fromJson(Map<String, Object?> json) {
     final version = _integer(json['schemaVersion']);
-    if (version != 2) {
+    // 3 是旧的面板状态版本，导入时按属性值转换
+    if (version != 3 && version != 4) {
       throw const FormatException('不支持的备份文件版本');
     }
     return AppDataBundle(
@@ -313,29 +339,18 @@ class AppDataBundle {
         null => const [],
         List values =>
           values
-              .map((item) => DeviceConfiguration.fromJson(_map(item)))
+              .map(
+                (item) => DeviceConfiguration.fromJson(
+                  _map(_map(item)['configuration']),
+                ).withGateway(_string(_map(item)['gatewayId'])),
+              )
               .toList(),
         _ => throw const FormatException('deviceConfigurations 必须是数组'),
       },
-      settings: ControlSettings.fromJson(_map(json['settings'])),
       exportedAt:
           DateTime.tryParse(_string(json['exportedAt'])) ?? DateTime.now(),
     );
   }
-}
-
-Map<String, Object?> _lightStateToJson(LightState state) => state.toJson();
-
-LightState _lightStateFromJson(Map<String, Object?> json) {
-  int channel(LightChannel key) =>
-      _boundedInteger(json[key.wire], 50, 0, 100);
-  return LightState(
-    red: channel(LightChannel.red),
-    green: channel(LightChannel.green),
-    blue: channel(LightChannel.blue),
-    white: channel(LightChannel.white),
-    uv: channel(LightChannel.uv),
-  );
 }
 
 Map<String, Object?> _map(Object? value) {
