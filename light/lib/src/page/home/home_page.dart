@@ -1,16 +1,17 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
+import 'package:light/src/core/connection_status.dart';
+import 'package:light/src/core/protocol/model.dart';
 
 import '../../app/controller.dart';
+import '../../app/router.dart';
 import '../../app/scope.dart';
 import '../../app/theme.dart';
 import '../../core/device_registry.dart';
-import '../../core/protocol/client.dart';
 import '../../core/protocol/protocol.dart';
-import '../../core/remote_gateway.dart';
-import '../../data/device_configuration.dart';
+import '../../core/mqtt/mqtt_gateway.dart';
+import '../../data/device_template.dart';
 import '../../data/models.dart';
 import '../../widgets/app_widgets.dart';
 import '../../widgets/remote_card.dart';
@@ -30,7 +31,7 @@ class _HomePageState extends State<HomePage> {
   bool _online = false;
   bool _busy = false;
 
-  RemoteGateway get gateway => AppScope.controller.mqttGateway;
+  MqttGateway get gateway => AppScope.controller.mqttGateway;
 
   DeviceRegistryService get registry => AppScope.controller.deviceRegistry;
 
@@ -88,7 +89,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   /// 本机保存过的设备优先，网关新登记但本机没有的设备也一并展示
-  List<_HomeDevice> _items(AppController controller, RemoteGateway remote) {
+  List<_HomeDevice> _items(AppController controller, MqttGateway remote) {
     final devices = controller.deviceRegistry;
     final items = <_HomeDevice>[];
     final listed = <String>{};
@@ -105,10 +106,6 @@ class _HomePageState extends State<HomePage> {
       if (item.selected) selectedId = id;
       items.add(item);
     }
-    for (final config in controller.deviceConfigurations) {
-      if (listed.add(config.id))
-        items.add(_describe(controller, remote, id: config.id));
-    }
     // 当前控制的设备排在最前，与米家的默认设备一致
     if (selectedId != null) {
       final index = items.indexWhere((item) => item.id == selectedId);
@@ -119,7 +116,7 @@ class _HomePageState extends State<HomePage> {
 
   _HomeDevice _describe(
     AppController controller,
-    RemoteGateway remote, {
+    MqttGateway remote, {
     required String id,
     SavedDevice? saved,
   }) {
@@ -128,22 +125,20 @@ class _HomePageState extends State<HomePage> {
     final registration = registry.registered[id];
     final entry = registry.stateOf(id);
     final connected =
-        state?.connected == true && registry.snapshot.deviceOnline;
+        state?.connected == true && registry.snapshot.mqttIsOnline;
     final mode = GatewayDeviceMode.valueOf(
       registration?[GatewayField.mode.wire],
     );
-    final configuration = controller.deviceConfigurations
-        .where((item) => item.id == id)
-        .firstOrNull;
+    final template = controller.templateForDevice(id);
     final savedDevice =
         saved ??
         controller.savedDevices.where((item) => item.id == id).firstOrNull;
-    final supportsLight = _supportsLight(configuration);
+    final supportsLight = _supportsLight(template);
     final name = _nameOf(
       controller,
       id,
       savedDevice,
-      configuration,
+      template,
       registration,
     );
     return _HomeDevice(
@@ -158,7 +153,7 @@ class _HomePageState extends State<HomePage> {
         entry,
         selected: controller.selectedDeviceId == id,
         connected: connected,
-        configuration: configuration,
+        template: template,
         deviceId: id,
       ),
       // 协议接管的设备由网关维护连接，广播设备没有单独通道
@@ -175,7 +170,7 @@ class _HomePageState extends State<HomePage> {
     AppController controller,
     String id,
     SavedDevice? saved,
-    DeviceConfiguration? configuration,
+    DeviceTemplate? template,
     Map<String, Object?>? registration,
   ) {
     if (saved != null && saved.name.trim().isNotEmpty) return saved.name.trim();
@@ -184,15 +179,16 @@ class _HomePageState extends State<HomePage> {
     // 网关登记里的别名，用于展示本机还没保存过的设备
     final alias = registration?[GatewayField.alias.wire];
     if (alias is String && alias.trim().isNotEmpty) return alias.trim();
-    if (configuration != null && configuration.name.trim().isNotEmpty) {
-      return configuration.name.trim();
+    if (template != null && template.name.trim().isNotEmpty) {
+      return template.name.trim();
     }
     return id;
   }
 
-  bool _supportsLight(DeviceConfiguration? configuration) {
-    if (configuration == null) return false;
-    return false;
+  bool _supportsLight(DeviceTemplate? template) {
+    if (template == null) return false;
+    final power = template.definition.properties['power'];
+    return power != null && power.canWrite;
   }
 
   /// 卡片副标题：当前控制的设备展示亮度，其它设备展示网关运行状态
@@ -201,15 +197,16 @@ class _HomePageState extends State<HomePage> {
     Map<String, Object?>? entry, {
     required bool selected,
     required bool connected,
-    required DeviceConfiguration? configuration,
+    required DeviceTemplate? template,
     required String deviceId,
   }) {
     if (!connected) {
-      return GatewayStatus.valueOf(entry?[GatewayField.state.wire])?.label ??
+      return ConnectionStatus.valueOf(entry?[GatewayField.state.wire])?.label ??
           '未连接';
     }
-    if (configuration != null)
-      return '${configuration.model.properties.length} 个属性';
+    if (template != null) {
+      return '${template.propertyCount} 个属性 · 模板 ${template.name}';
+    }
     return '已连接 · 状态待回读';
   }
 
@@ -218,7 +215,7 @@ class _HomePageState extends State<HomePage> {
     final controller = AppScope.watch(context);
     final remote = controller.mqttGateway;
     final items = _items(controller, remote);
-    final online = controller.deviceRegistry.snapshot.deviceOnline;
+    final online = controller.deviceRegistry.snapshot.mqttIsOnline;
     final ready =
         remote.client.connected && online && !_busy && !controller.devicesBusy;
     return RefreshIndicator(
@@ -246,7 +243,7 @@ class _HomePageState extends State<HomePage> {
             child: SectionTitle(
               '全部设备',
               trailing: TextButton(
-                onPressed: () => context.go('/devices'),
+                onPressed: context.goDevices,
                 child: const Text('管理设备'),
               ),
             ),
@@ -314,7 +311,7 @@ class _DeviceCard extends StatelessWidget {
       ),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: () => context.push('/device/${Uri.encodeComponent(item.id)}'),
+        onTap: () => context.pushDevice(item.id),
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(

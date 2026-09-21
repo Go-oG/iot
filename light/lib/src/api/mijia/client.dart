@@ -44,14 +44,13 @@ class MijiaApi {
     String? authDataPath,
     String? locale,
     String? timeZoneId,
-    Random? random,
+    this._random,
     this.apiBaseUrl = defaultApiBaseUrl,
     this.loginUrl = defaultLoginUrl,
     this.serviceLoginUrl = defaultServiceLoginUrl,
     this.logger,
     Map<String, dynamic>? authData,
   })  : locale = _normalizeLocale(locale),
-        _random = random,
         _store = authStore ??
             (authDataPath != null
                 ? FileAuthStore.forPath(authDataPath)

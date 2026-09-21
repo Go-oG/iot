@@ -1,15 +1,17 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
+import 'package:light/src/core/connection_status.dart';
+import 'package:light/src/core/protocol/model.dart';
+import 'package:light/src/data/device_template.dart';
 
 import '../../app/controller.dart';
+import '../../app/router.dart';
 import '../../app/scope.dart';
 import '../../app/theme.dart';
 import '../../core/device_registry.dart';
-import '../../core/protocol/client.dart';
 import '../../core/protocol/protocol.dart';
-import '../../core/remote_gateway.dart';
+import '../../core/mqtt/mqtt_gateway.dart';
 import '../../dialog/gateway_device.dart';
 import '../../widgets/remote_card.dart';
 
@@ -26,7 +28,7 @@ class _DevicesPageState extends State<DevicesPage> {
   bool _online = false;
   bool _busy = false;
 
-  RemoteGateway get gateway => AppScope.controller.mqttGateway;
+  MqttGateway get gateway => AppScope.controller.mqttGateway;
 
   DeviceRegistryService get registry => AppScope.controller.deviceRegistry;
 
@@ -61,7 +63,7 @@ class _DevicesPageState extends State<DevicesPage> {
     await registry.execute(GatewayManageAction.status);
   }
 
-  Future<void> _run(Future<void> Function() action) async {
+  Future<void> _run(FutureOr<void> Function() action) async {
     if (_busy || !mounted) return;
     setState(() {
       _busy = true;
@@ -163,123 +165,120 @@ class _DevicesPageState extends State<DevicesPage> {
     });
   }
 
+  Future<void> _chooseDeviceModel(String deviceId, String name) async {
+    final controller = AppScope.controller;
+    final currentModelId = controller.resolvedModelIdFor(deviceId);
+    final modelId = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const ListTile(
+              title: Text(
+                '选择协议模板',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+            for (final template in controller.availableDeviceTemplates)
+              ListTile(
+                leading: Icon(
+                  template.builtIn
+                      ? Icons.inventory_2_outlined
+                      : Icons.description_outlined,
+                ),
+                title: Text(template.name),
+                subtitle: Text(
+                  '${template.id} · ${template.propertyCount} 个属性'
+                  '${template.builtIn ? ' · 内置' : ''}',
+                ),
+                trailing: template.id == currentModelId
+                    ? const Icon(Icons.check_rounded, color: AppColors.blue)
+                    : null,
+                onTap: () => Navigator.pop(sheetContext, template.id),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (modelId == null || !mounted) return;
+    await _run(() => controller.bindDeviceModel(deviceId, modelId, name: name));
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = AppScope.watch(context);
-    final remote = controller.mqttGateway;
-    final ready =
-        remote.client.connected &&
-        remote.client.gatewayOnline &&
-        !_busy &&
-        !controller.devicesBusy;
     return ListView(
       padding: const EdgeInsets.only(bottom: 24, left: 16, right: 16),
       children: [
-        Padding(
-          padding: const EdgeInsets.only(top: 16, bottom: 16),
-          child: Row(
-            children: [
-              const Expanded(
-                child: Text(
-                  '设备',
-                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-                ),
-              ),
-              IconButton(
-                onPressed: () => context.push('/gateway-management'),
-                icon: const Icon(Icons.memory),
-              ),
-              IconButton(
-                onPressed: ready ? () => _run(_refresh) : null,
-                icon: const Icon(Icons.refresh),
-              ),
-            ],
-          ),
-        ),
-
+        _buildToolbar(controller),
         const RemoteControlCard(margin: EdgeInsets.zero),
         const SizedBox(height: 16),
         Row(
           children: [
             const Expanded(
               child: Text(
-                '设备模型',
+                '协议模板',
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
             ),
             TextButton.icon(
-              onPressed: () => context.push('/thing-model'),
+              onPressed: context.pushDeviceModel,
               icon: const Icon(Icons.add),
-              label: const Text('新建 / 导入物模型'),
+              label: const Text('新建 / 导入模板'),
             ),
           ],
         ),
-        for (final config in controller.deviceConfigurations)
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.devices_other_rounded),
-              title: Text(config.name),
-              subtitle: Text(
-                '${config.id} · ${config.model.properties.length} 个属性',
-              ),
-              onTap: () =>
-                  context.push('/device/${Uri.encodeComponent(config.id)}'),
-              trailing: PopupMenuButton<String>(
-                onSelected: (value) async {
-                  if (value == 'edit') {
-                    context.push(
-                      '/device-model?deviceId=${Uri.encodeComponent(config.id)}',
-                    );
-                    return;
-                  }
-                  final confirmed = await showDialog<bool>(
-                    context: context,
-                    builder: (context) => AlertDialog(
-                      title: const Text('删除本机物模型？'),
-                      content: Text('将删除 ${config.name} 的本机配置，网关登记仍然保留。'),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(context, false),
-                          child: const Text('取消'),
-                        ),
-                        FilledButton(
-                          onPressed: () => Navigator.pop(context, true),
-                          child: const Text('删除'),
-                        ),
-                      ],
-                    ),
-                  );
-                  if (confirmed == true) {
-                    try {
-                      controller.deleteDeviceConfiguration(config.id);
-                    } catch (error) {
-                      controller.showMessage('$error');
-                    }
-                  }
-                },
-                itemBuilder: (_) => const [
-                  PopupMenuItem(value: 'edit', child: Text('编辑物模型')),
-                  PopupMenuItem(value: 'delete', child: Text('删除本机模型')),
-                ],
-              ),
-            ),
-          ),
+        ..._buildDeviceConfigCard(controller),
         const SizedBox(height: 16),
-        ..._buildRecordCard(controller),
+        ..._buildRecordCard(context, controller),
         const SizedBox(height: 32),
         ..._buildNearCard(controller),
       ],
     );
   }
 
-  List<Widget> _buildRecordCard(AppController controller) {
+  Widget _buildToolbar(AppController controller) {
     final remote = controller.mqttGateway;
-    final registry = controller.deviceRegistry;
     final ready =
         remote.client.connected &&
         remote.client.gatewayOnline &&
         !_busy &&
         !controller.devicesBusy;
+    return Padding(
+      padding: const EdgeInsets.only(top: 16, bottom: 16),
+      child: Row(
+        children: [
+          const Expanded(
+            child: Text(
+              '设备',
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            ),
+          ),
+          IconButton(
+            onPressed: context.pushGatewayManagement,
+            icon: const Icon(Icons.memory),
+          ),
+          IconButton(
+            onPressed: ready ? () => _run(_refresh) : null,
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _buildRecordCard(
+    BuildContext context,
+    AppController controller,
+  ) {
+    final remote = controller.mqttGateway;
+    final registry = controller.deviceRegistry;
+    final client = remote.client;
+
+    final ready = client.isReady && !_busy && !controller.devicesBusy;
+
     final devices = registry.devices;
     final states = registry.runtime.values;
 
@@ -313,155 +312,197 @@ class _DevicesPageState extends State<DevicesPage> {
     }
 
     for (var device in devices) {
+      final id =
+          (device[GatewayField.deviceId.wire] ??
+                  device[GatewayField.device.wire])
+              as String;
+      final state = remote.client.device(id);
+      final runtime = states
+          .where(
+            (s) =>
+                s[GatewayField.device.wire] == device[GatewayField.device.wire],
+          )
+          .firstOrNull;
+      final connected =
+          state?.connected == true && registry.snapshot.mqttIsOnline;
+      final selected = registry.selectedDeviceId == id;
+      final mode = GatewayDeviceMode.valueOf(device[GatewayField.mode.wire]);
+      final modelId = controller.resolvedModelIdFor(id);
+      final template = modelId == null ? null : controller.templateFor(modelId);
+      final deviceName = '${device[GatewayField.alias.wire]}';
+      final bound = controller.savedDevices.any(
+        (item) => item.id == id && item.modelId != null,
+      );
+
       wList.add(
-        Builder(
-          builder: (context) {
-            final id =
-                (device[GatewayField.deviceId.wire] ??
-                        device[GatewayField.device.wire])
-                    as String;
-            final state = remote.client.device(id);
-            final runtime = states
-                .where(
-                  (s) =>
-                      s[GatewayField.device.wire] ==
-                      device[GatewayField.device.wire],
-                )
-                .firstOrNull;
-            final connected =
-                state?.connected == true && registry.snapshot.deviceOnline;
-            final selected = registry.selectedDeviceId == id;
-            final mode = GatewayDeviceMode.valueOf(
-              device[GatewayField.mode.wire],
-            );
-            final generic = controller.deviceConfigurations.any(
-              (item) => item.id == id,
-            );
-            return Card(
-              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+        Card(
+          margin: const EdgeInsets.symmetric(vertical: 5),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${device[GatewayField.alias.wire]} ${selected ? '· 当前设备' : ''}',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                Text(
+                  '$id · ${template?.name ?? '未匹配模板'}'
+                  '${bound ? '' : ' · 自动匹配'} · '
+                  '${connected ? '已连接' : ConnectionStatus.valueOf(runtime?[GatewayField.state.wire])?.label ?? '未连接'}'
+                  '${state?.rssi == null ? '' : ' · ${state!.rssi} dBm'}',
+                ),
+                Divider(height: 18, color: AppColors.line),
+                Wrap(
+                  spacing: 2,
                   children: [
-                    Text(
-                      '${device[GatewayField.alias.wire]} ${selected ? '· 当前灯具' : ''}',
-                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    _DeviceCardAction(
+                      icon: connected
+                          ? Icons.link_off_rounded
+                          : Icons.link_rounded,
+                      tooltip: connected ? '断开连接' : '建立连接',
+                      onPressed: () {
+                        if (!ready) {
+                          return;
+                        }
+                        _run(() {
+                          if (connected) {
+                            registry.disconnectDevice(id);
+                          } else {
+                            registry.connectDevice(id);
+                          }
+                        });
+                      },
                     ),
-                    Text(
-                      '$id · ${connected ? '已连接' : GatewayStatus.valueOf(runtime?[GatewayField.state.wire])?.label ?? '未连接'}${state?.rssi == null ? '' : ' · ${state!.rssi} dBm'}',
+                    _DeviceCardAction(
+                      icon: mode?.isBroadcast == true
+                          ? Icons.campaign_outlined
+                          : Icons.lightbulb_outline_rounded,
+                      tooltip: mode?.isBroadcast == true
+                          ? '广播设备不支持单独控制'
+                          : '使用${template?.name ?? '自动匹配模板'}控制',
+                      onPressed: ready && mode?.isBroadcast != true
+                          ? () => _run(() async {
+                              if (!connected) {
+                                await registry.connectDevice(id);
+                              }
+                              await controller.selectDevice(id, deviceName);
+                              if (context.mounted) {
+                                context.pushDevice(id);
+                              }
+                            })
+                          : null,
                     ),
-                    Divider(height: 18, color: AppColors.line),
-                    Wrap(
-                      spacing: 2,
-                      children: [
-                        _DeviceCardAction(
-                          icon: connected
-                              ? Icons.link_off_rounded
-                              : Icons.link_rounded,
-                          tooltip: connected ? '断开连接' : '建立连接',
-                          onPressed: ready
-                              ? () => _run(
-                                  () => connected
-                                      ? registry.disconnectDevice(id)
-                                      : registry.connectDevice(id),
-                                )
-                              : null,
-                        ),
-                        _DeviceCardAction(
-                          icon: mode?.isBroadcast == true
-                              ? Icons.campaign_outlined
-                              : generic
-                              ? Icons.memory_rounded
-                              : Icons.lightbulb_outline_rounded,
-                          tooltip: mode?.isBroadcast == true
-                              ? '广播设备不支持单独控制'
-                              : generic
-                              ? '作为通用设备控制'
-                              : '作为 AT5 灯控制',
-                          onPressed: ready && mode?.isBroadcast != true
-                              ? () => _run(() async {
-                                  if (!connected) {
-                                    await registry.connectDevice(id);
-                                  }
-                                  await controller.selectDevice(
-                                    id,
-                                    '${device[GatewayField.alias.wire]}',
-                                  );
-                                  if (context.mounted) {
-                                    context.push(
-                                      '/device/${Uri.encodeComponent(id)}',
-                                    );
-                                  }
-                                })
-                              : null,
-                        ),
-                        _DeviceCardAction(
-                          icon: Icons.terminal_rounded,
-                          tooltip: '读写 / 通知',
-                          onPressed: ready
-                              ? () => context.push(
-                                  '/device-debug/${Uri.encodeComponent(id)}',
-                                )
-                              : null,
-                        ),
-                        _DeviceCardAction(
-                          icon: Icons.tune_rounded,
-                          tooltip: '编辑设备模型',
-                          onPressed: () => context.push(
-                            '/device-model?deviceId=${Uri.encodeComponent(id)}',
-                          ),
-                        ),
-                        _DeviceCardAction(
-                          icon: Icons.edit_outlined,
-                          tooltip: '编辑登记',
-                          onPressed: ready ? () => _edit(device) : null,
-                        ),
-                        _DeviceCardAction(
-                          icon: runtime?[GatewayField.paused.wire] == true
-                              ? Icons.play_circle_outline_rounded
-                              : Icons.pause_circle_outline_rounded,
-                          tooltip:
-                              runtime?[GatewayField.protocolOwned.wire] == true
-                              ? '协议接管中，请使用连接 / 断开'
-                              : runtime?[GatewayField.paused.wire] == true
-                              ? '恢复自动连接'
-                              : '暂停自动连接',
-                          onPressed:
-                              ready &&
-                                  runtime?[GatewayField.protocolOwned.wire] !=
-                                      true
-                              ? () => _run(() async {
-                                  await registry.execute(
-                                    runtime?[GatewayField.paused.wire] == true
-                                        ? GatewayManageAction.resume
-                                        : GatewayManageAction.pause,
-                                    {
-                                      GatewayField.device:
-                                          device[GatewayField.device.wire],
-                                    },
-                                  );
-                                  await _refresh();
-                                })
-                              : null,
-                        ),
-                        _DeviceCardAction(
-                          icon: Icons.delete_outline_rounded,
-                          tooltip: '删除登记',
-                          color: AppColors.red,
-                          onPressed: ready ? () => _delete(device) : null,
-                        ),
-                      ],
+                    _DeviceCardAction(
+                      icon: Icons.terminal_rounded,
+                      tooltip: '读写 / 通知',
+                      onPressed: ready
+                          ? () => context.pushDeviceDebug(id)
+                          : null,
+                    ),
+                    _DeviceCardAction(
+                      icon: Icons.category_outlined,
+                      tooltip: '绑定协议模板',
+                      onPressed: () => _chooseDeviceModel(id, deviceName),
+                    ),
+                    _DeviceCardAction(
+                      icon: Icons.description_outlined,
+                      tooltip: '编辑当前协议模板',
+                      onPressed: modelId == null
+                          ? null
+                          : () => context.pushDeviceModel(modelId: modelId),
+                    ),
+                    _DeviceCardAction(
+                      icon: Icons.edit_outlined,
+                      tooltip: '编辑登记',
+                      onPressed: ready ? () => _edit(device) : null,
+                    ),
+                    _DeviceCardAction(
+                      icon: runtime?[GatewayField.paused.wire] == true
+                          ? Icons.play_circle_outline_rounded
+                          : Icons.pause_circle_outline_rounded,
+                      tooltip: runtime?[GatewayField.protocolOwned.wire] == true
+                          ? '协议接管中，请使用连接 / 断开'
+                          : runtime?[GatewayField.paused.wire] == true
+                          ? '恢复自动连接'
+                          : '暂停自动连接',
+                      onPressed:
+                          ready &&
+                              runtime?[GatewayField.protocolOwned.wire] != true
+                          ? () => _run(() async {
+                              await registry.execute(
+                                runtime?[GatewayField.paused.wire] == true
+                                    ? GatewayManageAction.resume
+                                    : GatewayManageAction.pause,
+                                {
+                                  GatewayField.device:
+                                      device[GatewayField.device.wire],
+                                },
+                              );
+                              await _refresh();
+                            })
+                          : null,
+                    ),
+                    _DeviceCardAction(
+                      icon: Icons.delete_outline_rounded,
+                      tooltip: '删除登记',
+                      color: AppColors.red,
+                      onPressed: ready ? () => _delete(device) : null,
                     ),
                   ],
                 ),
-              ),
-            );
-          },
+              ],
+            ),
+          ),
         ),
       );
     }
+    return wList;
+  }
 
+  List<Widget> _buildDeviceConfigCard(AppController controller) {
+    List<Widget> wList = [];
+    final deviceIds = {
+      ...controller.savedDevices.map((item) => item.id),
+      ...controller.deviceRegistry.registered.keys,
+    };
+    for (final template in controller.availableDeviceTemplates) {
+      final boundCount = deviceIds
+          .where((id) => controller.resolvedModelIdFor(id) == template.id)
+          .length;
+      wList.add(
+        Card(
+          child: ListTile(
+            leading: Icon(
+              template.builtIn
+                  ? Icons.inventory_2_outlined
+                  : Icons.description_outlined,
+            ),
+            title: Text('${template.name}${template.builtIn ? ' · 内置' : ''}'),
+            subtitle: Text(
+              '${template.id} · ${template.propertyCount} 个属性 · '
+              '已绑定 $boundCount 台设备',
+            ),
+            onTap: () => context.pushDeviceModel(modelId: template.id),
+            trailing: template.builtIn
+                ? null
+                : PopupMenuButton<String>(
+                    onSelected: (value) async {
+                      if (value == 'edit') {
+                        context.pushDeviceModel(modelId: template.id);
+                        return;
+                      }
+                      _deleteTemplate(template, controller);
+                    },
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(value: 'edit', child: Text('编辑协议模板')),
+                      PopupMenuItem(value: 'delete', child: Text('删除协议模板')),
+                    ],
+                  ),
+          ),
+        ),
+      );
+    }
     return wList;
   }
 
@@ -533,6 +574,36 @@ class _DevicesPageState extends State<DevicesPage> {
     }
 
     return wList;
+  }
+
+  void _deleteTemplate(
+    DeviceTemplate template,
+    AppController controller,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('删除协议模板？'),
+        content: Text('将删除 ${template.name}，未绑定设备的模板可以安全移除'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      try {
+        controller.deleteDeviceTemplate(template.id);
+      } catch (error) {
+        controller.showMessage('$error');
+      }
+    }
   }
 }
 

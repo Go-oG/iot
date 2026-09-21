@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:light/src/app/controller.dart';
+import 'package:light/src/app/router.dart';
 import 'package:light/src/app/scope.dart';
 import 'package:light/src/app/theme.dart';
 import 'package:light/src/data/models.dart';
@@ -22,7 +23,7 @@ class ProfilePage extends StatelessWidget {
             if (context.canPop()) {
               context.pop();
             } else {
-              context.go('/devices');
+              context.goDevices();
             }
           },
         ),
@@ -129,7 +130,7 @@ class ProfilePage extends StatelessWidget {
                     icon: Icons.schedule_rounded,
                     label: '照明计划',
                     subtitle: '设置亮灯时段',
-                    onTap: () => context.go('/plans'),
+                    onTap: context.goPlans,
                   ),
                   _ActionTile(
                     icon: Icons.restart_alt_rounded,
@@ -141,13 +142,13 @@ class ProfilePage extends StatelessWidget {
                     icon: Icons.wifi_find_rounded,
                     label: '发现设备',
                     subtitle: '经网关扫描附近设备',
-                    onTap: () => context.go('/devices'),
+                    onTap: context.goDevices,
                   ),
                   _ActionTile(
                     icon: Icons.tune_rounded,
-                    label: '设备物模型',
+                    label: '协议模板',
                     subtitle: '配置属性、服务与控制命令',
-                    onTap: () => context.go('/thing-model'),
+                    onTap: context.pushDeviceModel,
                   ),
                 ],
               ),
@@ -166,11 +167,16 @@ Future<void> _editScene(
   ScenePreset? scene,
   bool useCurrent = false,
 }) async {
+  final device = controller.selectedDevice;
+  if (device == null) {
+    controller.showMessage('请先配置并选择设备模型');
+    return;
+  }
   final result = await showSceneEditor(
     context,
     newId: controller.createSceneId(),
     scene: scene,
-    model: controller.selectedModel,
+    device: device,
     initialProperties: useCurrent ? controller.currentProperties : null,
   );
   if (result != null) {
@@ -361,7 +367,7 @@ Future<void> _showResetActions(BuildContext context, AppController controller) {
             subtitle: const Text('扫描和连接附近灯具'),
             onTap: () {
               Navigator.pop(sheetContext);
-              context.go('/devices');
+              context.goDevices();
             },
           ),
           ListTile(

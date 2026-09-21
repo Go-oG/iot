@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 
 import '../app/controller.dart';
+import '../app/router.dart';
 import '../app/scope.dart';
 import '../app/theme.dart';
 import 'app_widgets.dart';
@@ -29,7 +29,7 @@ class RemoteControlCard extends StatelessWidget {
           tooltip: config == null ? '配置连接' : '编辑连接',
           onPressed: controller.devicesBusy
               ? null
-              : () => context.push('/mqtt-settings'),
+              : context.pushMqttSettings,
           icon: const Icon(Icons.edit, color: AppColors.blue, size: 24),
         ),
       ),
@@ -48,7 +48,11 @@ class RemoteControlCard extends StatelessWidget {
           runSpacing: 4,
           alignment: WrapAlignment.spaceBetween,
           children: [
-            _CardAction(icon: Icons.terminal_rounded, label: '消息调试', onPressed: () => context.push('/mqtt-debug')),
+            _CardAction(
+              icon: Icons.terminal_rounded,
+              label: '消息调试',
+              onPressed: context.pushMqttDebug,
+            ),
             _CardAction(
               icon: Icons.refresh_rounded,
               label: '重连服务器',
@@ -57,7 +61,7 @@ class RemoteControlCard extends StatelessWidget {
             _CardAction(
               icon: Icons.memory_rounded,
               label: 'ESP32 管理',
-              onPressed: () => context.push('/gateway-management'),
+              onPressed: context.pushGatewayManagement,
             ),
             _CardAction(
               icon: Icons.delete_outline_rounded,

@@ -6,7 +6,7 @@ import 'package:light/src/data/models.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:sqlite3/sqlite3.dart';
 
-import 'device_configuration.dart';
+import 'device_template.dart';
 
 /// 本机数据库：只保存与设备无关的数据和属性值
 ///
@@ -18,7 +18,7 @@ class AppDatabase {
   final Database _database;
 
   /// 当前 schema 版本，写入 SQLite 的 user_version
-  static const int schemaVersion = 5;
+  static const int schemaVersion = 6;
 
   static Future<AppDatabase> open() async {
     final directory = await getApplicationSupportDirectory();
@@ -63,12 +63,12 @@ class AppDatabase {
     final devices = _database
         .select(
           'SELECT gateway_id, id, data_json FROM saved_devices${gatewayId == null ? '' : ' WHERE gateway_id = ?'}',
-          [if (gatewayId != null) gatewayId],
+          [?gatewayId],
         )
         .map(
-          (row) => SavedDevice.fromJson(
-            _decodeJson(row['data_json'] as String),
-          ).copyWith(gatewayId: row['gateway_id'] as String),
+          (row) =>
+              SavedDevice.fromJson(_decodeJson(row['data_json'] as String))
+                  .copyWith(gatewayId: row['gateway_id'] as String),
         )
         .toList();
     devices.sort(
@@ -124,54 +124,41 @@ class AppDatabase {
     );
   }
 
-  List<DeviceConfiguration> loadDeviceConfigurations({String? gatewayId}) =>
-      _database
-          .select(
-            'SELECT gateway_id, data_json FROM device_configurations${gatewayId == null ? '' : ' WHERE gateway_id = ?'} ORDER BY rowid DESC',
-            [if (gatewayId != null) gatewayId],
-          )
-          .map(
-            (row) => DeviceConfiguration.fromJsonString(
-              row['data_json'] as String,
-            ).withGateway(row['gateway_id'] as String),
-          )
-          .toList();
+  List<DeviceTemplate> loadDeviceTemplates({String? gatewayId}) => _database
+      .select(
+        'SELECT gateway_id, data_json FROM device_templates${gatewayId == null ? '' : ' WHERE gateway_id = ?'} ORDER BY rowid DESC',
+        [?gatewayId],
+      )
+      .map(
+        (row) =>
+            DeviceTemplate.fromJsonString(row['data_json'] as String)
+                .withGateway(row['gateway_id'] as String),
+      )
+      .toList();
 
-  void saveDeviceConfiguration(
-    DeviceConfiguration configuration, {
-    String? previousId,
-  }) {
+  void saveDeviceTemplate(DeviceTemplate template, {String? previousId}) {
     _transaction(() {
-      if (configuration.id != previousId &&
-          _database
-              .select(
-                'SELECT id FROM device_configurations WHERE gateway_id = ? AND id = ?',
-                [configuration.gatewayId, configuration.id],
-              )
-              .isNotEmpty) {
-        throw StateError('设备标识已存在，请更换标识后保存');
+      if (template.id != previousId &&
+          _database.select(
+            'SELECT id FROM device_templates WHERE gateway_id = ? AND id = ?',
+            [template.gatewayId, template.id],
+          ).isNotEmpty) {
+        throw StateError('模板标识已存在，请更换标识后保存');
       }
       _database.execute(
-        'INSERT INTO device_configurations(gateway_id, id, data_json) VALUES (?, ?, ?) '
+        'INSERT INTO device_templates(gateway_id, id, data_json) VALUES (?, ?, ?) '
         'ON CONFLICT(gateway_id, id) DO UPDATE SET data_json = excluded.data_json',
-        [
-          configuration.gatewayId,
-          configuration.id,
-          configuration.toJsonString(),
-        ],
+        [template.gatewayId, template.id, template.toJsonString()],
       );
-      if (previousId != null && previousId != configuration.id) {
-        deleteDeviceConfiguration(
-          previousId,
-          gatewayId: configuration.gatewayId,
-        );
+      if (previousId != null && previousId != template.id) {
+        deleteDeviceTemplate(previousId, gatewayId: template.gatewayId);
       }
     });
   }
 
-  void deleteDeviceConfiguration(String id, {String gatewayId = ''}) =>
+  void deleteDeviceTemplate(String id, {String gatewayId = ''}) =>
       _database.execute(
-        'DELETE FROM device_configurations WHERE gateway_id = ? AND id = ?',
+        'DELETE FROM device_templates WHERE gateway_id = ? AND id = ?',
         [gatewayId, id],
       );
 
@@ -179,12 +166,10 @@ class AppDatabase {
   void bindLegacyGateway(String gatewayId) {
     if (gatewayId.isEmpty) return;
     _transaction(() {
-      for (final table in ['saved_devices', 'device_configurations']) {
-        _database.execute(
-          'UPDATE OR IGNORE $table SET gateway_id = ? WHERE gateway_id = ?',
-          [gatewayId, ''],
-        );
-      }
+      _database.execute(
+        'UPDATE OR IGNORE saved_devices SET gateway_id = ? WHERE gateway_id = ?',
+        [gatewayId, ''],
+      );
     });
   }
 
@@ -193,7 +178,7 @@ class AppDatabase {
       scenes: loadScenes(),
       schedules: loadSchedules(),
       devices: loadDevices(),
-      deviceConfigurations: loadDeviceConfigurations(),
+      deviceTemplates: loadDeviceTemplates(),
       exportedAt: DateTime.now(),
     );
   }
@@ -204,7 +189,7 @@ class AppDatabase {
       _database.execute('DELETE FROM schedules');
       _database.execute('DELETE FROM scenes');
       _database.execute('DELETE FROM saved_devices');
-      _database.execute('DELETE FROM device_configurations');
+      _database.execute('DELETE FROM device_templates');
       for (final scene in data.scenes) {
         saveScene(scene);
       }
@@ -218,15 +203,13 @@ class AppDatabase {
               : device,
         );
       }
-      for (final configuration in data.deviceConfigurations) {
+      for (final template in data.deviceTemplates) {
         _database.execute(
-          'INSERT INTO device_configurations(gateway_id, id, data_json) VALUES (?, ?, ?)',
+          'INSERT INTO device_templates(gateway_id, id, data_json) VALUES (?, ?, ?)',
           [
-            configuration.gatewayId.isEmpty
-                ? legacyGatewayId
-                : configuration.gatewayId,
-            configuration.id,
-            configuration.toJsonString(),
+            template.gatewayId.isEmpty ? legacyGatewayId : template.gatewayId,
+            template.id,
+            template.toJsonString(),
           ],
         );
       }
@@ -238,7 +221,7 @@ class AppDatabase {
       _database.execute('DELETE FROM schedules');
       _database.execute('DELETE FROM scenes');
       _database.execute('DELETE FROM saved_devices');
-      _database.execute('DELETE FROM device_configurations');
+      _database.execute('DELETE FROM device_templates');
     });
     _seed();
   }
@@ -251,8 +234,16 @@ class AppDatabase {
     final legacyColumns =
         _tableExists('scenes') && !_columnExists('scenes', 'data_json');
     if (legacyColumns) _migrateLegacyTables();
+    final legacyTemplateTable = _tableExists('device_configurations');
     _createJsonTables();
     _migrateScopedDevices();
+    if (legacyTemplateTable) {
+      _database.execute(
+        'INSERT OR REPLACE INTO device_templates(gateway_id, id, data_json) '
+        'SELECT gateway_id, id, data_json FROM device_configurations',
+      );
+      _database.execute('DROP TABLE device_configurations');
+    }
     // 操作历史与面板设置表都已停用，旧库升级时直接删除
     _database.execute('DROP TABLE IF EXISTS activity_logs');
     _database.execute('DROP TABLE IF EXISTS device_settings');
@@ -266,7 +257,11 @@ class AppDatabase {
 
   void _migrateScopedDevices() {
     _transaction(() {
-      for (final table in ['saved_devices', 'device_configurations']) {
+      final tables = ['saved_devices'];
+      if (_tableExists('device_configurations')) {
+        tables.add('device_configurations');
+      }
+      for (final table in tables) {
         if (_columnExists(table, 'gateway_id')) continue;
         _database.execute('ALTER TABLE $table RENAME TO ${table}_v3');
         _database.execute(
@@ -314,7 +309,7 @@ class AppDatabase {
 
   void _createJsonTables() {
     _database.execute(
-      "CREATE TABLE IF NOT EXISTS device_configurations (gateway_id TEXT NOT NULL DEFAULT '', id TEXT NOT NULL, data_json TEXT NOT NULL, PRIMARY KEY(gateway_id, id)) STRICT",
+      "CREATE TABLE IF NOT EXISTS device_templates (gateway_id TEXT NOT NULL DEFAULT '', id TEXT NOT NULL, data_json TEXT NOT NULL, PRIMARY KEY(gateway_id, id)) STRICT",
     );
     _database.execute('''
       CREATE TABLE IF NOT EXISTS scenes (
@@ -341,9 +336,9 @@ class AppDatabase {
   /// 写入内置配色与默认计划，恢复默认数据时同样走这里
   void _seed() {
     _transaction(() {
-      if ((_database.select(
-                'SELECT COUNT(*) AS count FROM scenes',
-              ).first['count']
+      if ((_database
+                  .select('SELECT COUNT(*) AS count FROM scenes')
+                  .first['count']
               as int) ==
           0) {
         for (final preset in [
@@ -353,9 +348,9 @@ class AppDatabase {
           saveScene(preset);
         }
       }
-      if ((_database.select(
-                'SELECT COUNT(*) AS count FROM schedules',
-              ).first['count']
+      if ((_database
+                  .select('SELECT COUNT(*) AS count FROM schedules')
+                  .first['count']
               as int) ==
           0) {
         _seedSchedules();
@@ -474,9 +469,9 @@ class AppDatabase {
         deviceIds.any((key) => key.deviceId.isEmpty)) {
       throw const FormatException('设备标识重复或为空');
     }
-    if (data.deviceConfigurations.map((item) => item.key).toSet().length !=
-        data.deviceConfigurations.length) {
-      throw const FormatException('功能配置的设备标识重复');
+    if (data.deviceTemplates.map((item) => item.key).toSet().length !=
+        data.deviceTemplates.length) {
+      throw const FormatException('协议模板标识重复');
     }
   }
 
@@ -484,12 +479,10 @@ class AppDatabase {
       _database.select('PRAGMA user_version').first.values.first as int;
 
   bool _tableExists(String table) {
-    return _database
-        .select(
-          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
-          [table],
-        )
-        .isNotEmpty;
+    return _database.select(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+      [table],
+    ).isNotEmpty;
   }
 
   bool _columnExists(String table, String column) {

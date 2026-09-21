@@ -12,11 +12,10 @@
 ```mermaid
 flowchart LR
   UI[首页 / 设备 / 计划 / 配色 / 设备模型页] --> Controller[AppController]
-  UI --> Session[DeviceModelSession]
-  Controller --> Session
-  Session --> Model[DeviceModel / DeviceModelRuntime]
-  Session --> Registry[DeviceRegistryService]
-  Session --> Gateway[GatewayClient]
+  UI --> Device[Device]
+  Controller --> Device
+  Device --> Registry[DeviceRegistryService]
+  Device --> Gateway[GatewayClient]
   Registry --> Gateway
   Gateway --> MQTT[MqttService]
   MQTT --> ESP[ESP32 请求队列 / 去重 / GATT]
@@ -27,7 +26,7 @@ flowchart LR
 ```
 
 应用已有清楚的传输边界：`MqttService` 处理 MQTT，`GatewayClient` 负责 reqId 关联与状态快照，
-`DeviceModelSession` 处理业务字节协议。网关只做 BLE 原语，App 负责物模型与设备编解码，
+`Device` 处理业务字节协议。网关只做 BLE 原语，App 负责物模型与设备编解码，
 固件里不写任何设备私有报文。
 
 已有可靠性基础值得保留：
@@ -69,7 +68,7 @@ class SchedulePlan {
 - 配色控件按当前设备模型的颜色属性生成：属性名、通道名、上下限都来自模型定义，
   换一台设备不需要改配色代码
 
-### 第二步：四个入口一律走 DeviceModelSession
+### 第二步：四个入口一律走 Device
 
 `AppController` 里原本直接改写面板状态或走旧 AT5 会话的入口全部改成属性写入：
 
@@ -140,15 +139,15 @@ class SchedulePlan {
 | `scenes` | 配色 JSON：名称、说明、标识颜色、属性值 |
 | `schedules` | 计划 JSON：重复规则、关联配色、`timer` 属性值 |
 | `saved_devices` | 本机保存过的设备，主键 `(gateway_id, id)` |
-| `device_configurations` | 本机设备模型，内容就是一份 `DeviceModel` JSON |
+| `device_configurations` | 本机设备定义，内容就是一份 `Device` JSON |
 
-设备模型的随包定义放在 `assets/devices/*.json`，启动时一次性加载到 `DeviceModelCatalog`；
+设备模型的随包定义放在 `assets/devices/*.json`，启动时通过 `Device.loadDefinitions()` 一次性加载；
 没有本机配置的设备按内置 AT5 模型处理。属性值只在写入前用 `ValueValidator` 校验，
 数据库里不保存任何面板状态，因此不存在「设置表和设备状态不一致」的中间态。
 
 ## 4. 会话与确认语义
 
-- 一次写入按 `DeviceModelRuntime.encodeWrite` 编码；同一批次的属性互相可见，
+- 一次写入按 `Device.encodeWrite` 编码；同一批次的属性互相可见，
   编码结果相同的重复报文只写一条，多步写入合成一次 `batch`
 - 帧定义是字符串模板（`AA55 ${length:u8} ${value:u16be,scale=0.1} ${crc16modbus}`）：
   出现顺序即帧内顺序，长度与校验范围按字段名引用，模型载入时编译成运行时结构，

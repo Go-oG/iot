@@ -2,13 +2,13 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
+import 'package:light/src/core/mqtt/model.dart';
 
+import '../../app/router.dart';
 import '../../app/theme.dart';
-import '../../core/keep_alive.dart';
-import '../../core/protocol/mqtt_debug_client.dart';
+import '../../core/mqtt/mqtt_debug_client.dart';
 import '../../core/protocol/protocol.dart';
-import '../../data/remote_settings.dart';
+import '../../core/mqtt/mqtt_config.dart';
 import '../../widgets/app_widgets.dart';
 
 /// QoS 候选说明，同时用于底部选择和消息气泡展示
@@ -26,7 +26,7 @@ class MqttDebugPage extends StatefulWidget {
     super.key,
   });
 
-  final RemoteSettings? settings;
+  final MqttConfig? settings;
   final MqttDebugClient? client;
 
   /// 远程控制已连接时进入页面自动建立调试连接，保持连接状态一致
@@ -52,8 +52,6 @@ class _MqttDebugPageState extends State<MqttDebugPage> {
   bool _subscribing = false;
   bool _syncTopics = true;
   bool _showSettings = true;
-  bool _keepAlive = false;
-  bool _keepAliveFailed = false;
   int _qos = 1;
   bool _retain = false;
   String? _error;
@@ -65,8 +63,9 @@ class _MqttDebugPageState extends State<MqttDebugPage> {
     _publishTopic.addListener(_onPublishTopicChanged);
     if (widget.autoConnect && widget.settings?.enabled == true) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && !_client.connected && !_client.connecting)
+        if (mounted && !_client.connected && !_client.connecting) {
           unawaited(_connect());
+        }
       });
     }
   }
@@ -75,10 +74,6 @@ class _MqttDebugPageState extends State<MqttDebugPage> {
   void dispose() {
     _subscribeTopic.removeListener(_onSubscribeTopicChanged);
     _publishTopic.removeListener(_onPublishTopicChanged);
-    if (_keepAlive) {
-      _keepAlive = false;
-      unawaited(KeepAliveService.stop(owner: KeepAliveService.debugOwner));
-    }
     _client.dispose();
     _subscribeTopic.dispose();
     _publishTopic.dispose();
@@ -120,35 +115,10 @@ class _MqttDebugPageState extends State<MqttDebugPage> {
     final settings = widget.settings;
     if (settings == null) return;
     await _run(() => _client.connect(settings));
-    if (mounted && _client.connected && KeepAliveService.supported)
-      unawaited(_startKeepAlive());
-  }
-
-  /// 连接成功后申请息屏保持，失败时仅提示，不影响调试连接
-  Future<void> _startKeepAlive() async {
-    final active = await KeepAliveService.start(
-      owner: KeepAliveService.debugOwner,
-      title: 'MQTT调试连接',
-      text: '正在保持调试连接，避免息屏后断开',
-    );
-    if (!mounted || (_keepAlive == active && _keepAliveFailed == !active))
-      return;
-    setState(() {
-      _keepAlive = active;
-      _keepAliveFailed = !active;
-    });
   }
 
   Future<void> _disconnect() async {
-    final keepAlive = _keepAlive;
-    setState(() {
-      _keepAlive = false;
-      _keepAliveFailed = false;
-    });
     _client.disconnect();
-    if (keepAlive) {
-      await KeepAliveService.stop(owner: KeepAliveService.debugOwner);
-    }
   }
 
   Future<void> _subscribe() async {
@@ -243,7 +213,7 @@ class _MqttDebugPageState extends State<MqttDebugPage> {
                   children: [
                     const Text('请先保存 MQTT 服务器配置'),
                     TextButton(
-                      onPressed: () => context.push('/mqtt-settings'),
+                      onPressed: context.pushMqttSettings,
                       child: const Text('配置连接'),
                     ),
                   ],
@@ -257,11 +227,6 @@ class _MqttDebugPageState extends State<MqttDebugPage> {
                       padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
                       child: _settingsCard(),
                     ),
-                    if (_keepAlive || _keepAliveFailed)
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                        child: _keepAliveHint(),
-                      ),
                     Expanded(child: _messageList()),
                     _composer(),
                   ],
@@ -290,26 +255,6 @@ class _MqttDebugPageState extends State<MqttDebugPage> {
       : _client.connecting
       ? '取消'
       : '重新连接';
-
-  Widget _keepAliveHint() {
-    final color = _keepAlive ? AppColors.muted : AppColors.orange;
-    return Row(
-      children: [
-        Icon(
-          _keepAlive ? Icons.battery_saver_outlined : Icons.error_outline,
-          size: 14,
-          color: color,
-        ),
-        const SizedBox(width: 6),
-        Expanded(
-          child: Text(
-            _keepAlive ? '息屏保持已开启，锁屏后连接不会断开' : '息屏保持未开启，请在系统中允许关闭电池优化',
-            style: TextStyle(fontSize: 12, color: color),
-          ),
-        ),
-      ],
-    );
-  }
 
   Widget _settingsCard() {
     return SurfaceCard(
@@ -652,8 +597,9 @@ class _MarqueeTextState extends State<_MarqueeText>
         }
         if (!_controller.isAnimating) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted && !_controller.isAnimating)
+            if (mounted && !_controller.isAnimating) {
               _controller.repeat(reverse: true);
+            }
           });
         }
         return SizedBox(
@@ -694,8 +640,8 @@ class _MessageRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (entry.kind == MqttEntryKind.system) return _SystemLine(entry: entry);
-    final sent = entry.kind == MqttEntryKind.sent;
+    if (entry.kind == MqttMsgKind.system) return _SystemLine(entry: entry);
+    final sent = entry.kind == MqttMsgKind.sent;
     final foreground = sent ? Colors.white : AppColors.navy;
     final secondary = sent
         ? Colors.white.withValues(alpha: 0.75)

@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 import 'package:light/src/app/scope.dart';
 
+import '../app/router.dart';
 import '../app/theme.dart';
 import '../core/protocol/protocol.dart';
-import '../data/remote_settings.dart';
+import '../core/mqtt/mqtt_config.dart';
 import '../widgets/app_widgets.dart';
 
 class MqttSettingsPage extends StatefulWidget {
@@ -65,7 +65,7 @@ class _MqttSettingsPageState extends State<MqttSettingsPage> {
             TextButton(
               onPressed: _saving || AppScope.controller.remoteSettings == null
                   ? null
-                  : () => context.push('/mqtt-debug'),
+                  : context.pushMqttDebug,
               child: const Text('消息调试'),
             ),
           ],
@@ -188,7 +188,7 @@ class _MqttSettingsPageState extends State<MqttSettingsPage> {
       _error = null;
     });
     try {
-      final settings = RemoteSettings(
+      final settings = MqttConfig(
         host: _host.text.trim(),
         port: int.tryParse(_port.text) ?? 0,
         tls: _tls,

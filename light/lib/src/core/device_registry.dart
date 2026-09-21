@@ -1,24 +1,25 @@
 import 'dart:async';
 
-import 'protocol/client.dart';
+import 'package:light/src/core/protocol/model.dart';
 import 'protocol/protocol.dart';
-import 'protocol/remote_protocol.dart';
-import 'remote_gateway.dart';
+import 'protocol/remote_status.dart';
+import 'mqtt/mqtt_gateway.dart';
 
 /// 网关设备管理：登记列表、扫描与附近设备、当前控制设备
 ///
-/// 只通过 [RemoteGateway] 收发，不参与任何设备协议的编解码；
+/// 只通过 [MqttGateway] 收发，不参与任何设备协议的编解码；
 /// 扫描结果与登记信息都缓存在这里，供界面和会话查询。
 class DeviceRegistryService {
-  DeviceRegistryService({required RemoteGateway gateway}) : _gateway = gateway {
+
+  DeviceRegistryService({required this._gateway}) {
     _events = _gateway.events.listen(_onEvent);
     _subscription = _gateway.client.changes.listen((_) => _publish());
   }
 
-  final RemoteGateway _gateway;
+  final MqttGateway _gateway;
   late final StreamSubscription<GatewayEvent> _events;
   late final StreamSubscription<GatewayClientSnapshot> _subscription;
-  final _changes = StreamController<RemoteSnapshot>.broadcast();
+  final _changes = StreamController<RemoteStatus>.broadcast();
 
   /// 网关上登记的设备，键为设备标识
   final Map<String, Map<String, Object?>> registered = {};
@@ -39,12 +40,14 @@ class DeviceRegistryService {
   int _scanGeneration = 0;
   Timer? _scanTimer;
   bool _disposed = false;
-  RemoteSnapshot _snapshot = const RemoteSnapshot();
+
+  ///远端状态快照
+  RemoteStatus _statusSnapshot = const RemoteStatus();
 
   /// 连接与灯具状态的汇总，供界面判断能否下发
-  RemoteSnapshot get snapshot => _snapshot;
+  RemoteStatus get snapshot => _statusSnapshot;
 
-  Stream<RemoteSnapshot> get changes => _changes.stream;
+  Stream<RemoteStatus> get changes => _changes.stream;
 
   bool get connected =>
       _gateway.client.connected && _gateway.client.snapshot.gatewayOnline;
@@ -239,21 +242,15 @@ class DeviceRegistryService {
     if (_disposed) return;
     if (!connected && scanning) _invalidateScan();
     final state = _gateway.client.snapshot;
-    _snapshot = RemoteSnapshot(
-      connection: state.connected
-          ? ConnectionStatus.connected
-          : state.connection == GatewayStatus.connecting
-          ? ConnectionStatus.connecting
-          : ConnectionStatus.disconnected,
-      deviceOnline: state.gatewayOnline,
-      lampConnected:
-          state.connected &&
-          state.gatewayOnline &&
+    _statusSnapshot = RemoteStatus(
+      connection: state.connection,
+      mqttIsOnline: state.gatewayOnline,
+      hardwareConnected: state.connected && state.gatewayOnline &&
           (state.device(selectedDeviceId ?? '')?.connected ?? false),
-      lastSeen: state.lastSeen,
+      lastTime: state.lastSeen,
       message: state.message,
     );
-    if (!_changes.isClosed) _changes.add(_snapshot);
+    if (!_changes.isClosed) _changes.add(_statusSnapshot);
   }
 
   Future<void> dispose() async {

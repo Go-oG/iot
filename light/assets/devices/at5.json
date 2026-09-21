@@ -2,6 +2,8 @@
   "id": "at5",
   "name": "AT5 智能灯",
   "properties": {
+    "service": "8332af20-6d0e-4eea-bb35-665544332211",
+    "characteristic": "8332af20-6d0e-4eea-bb35-665544332211",
     "power": {
       "name": "电源",
       "type": "bool",
@@ -11,22 +13,12 @@
       },
       "write": {
         "op": "write",
-        "service": "8332af20-6d0e-4eea-bb35-665544332211",
-        "characteristic": "8332af20-6d0e-4eea-bb35-665544332211",
-        "writeMode": "withResponse",
-        "request": {
-          "template": "34438888 05 00 ${length:u8} ${value:bool8} ${crc16modbus}"
-        }
+        "mode": "withResponse",
+        "cmd": "344388880500${length:u8}${value:bool8}${crc16modbus}"
       },
       "notify": {
         "op": "subscribe",
-        "service": "8332af20-6d0e-4eea-bb35-665544332211",
-        "characteristic": "8332af20-6d0e-4eea-bb35-665544332211",
-        "response": {
-          "service": "8332af20-6d0e-4eea-bb35-665544332211",
-          "characteristic": "8332af20-6d0e-4eea-bb35-665544332211",
-          "template": "43348888 05 00 ${skip:u8} 00 ${crc16modbus,at=-2}"
-        }
+        "response": "433488880500${skip:u8}00${crc16modbus,at=-2}"
       }
     },
     "channels": {
@@ -81,22 +73,12 @@
       },
       "write": {
         "op": "write",
-        "service": "8332af20-6d0e-4eea-bb35-665544332211",
-        "characteristic": "8332af20-6d0e-4eea-bb35-665544332211",
-        "writeMode": "withResponse",
-        "request": {
-          "template": "34438888 03 00 ${length:u8} ${value:object,fields=red:u8;green:u8;blue:u8;white:u8;uv:u8} ${crc16modbus}"
-        }
+        "mode": "withResponse",
+        "cmd": "34438888 03 00 ${length:u8} ${value:object,fields=red:u8;green:u8;blue:u8;white:u8;uv:u8} ${crc16modbus}"
       },
       "notify": {
         "op": "subscribe",
-        "service": "8332af20-6d0e-4eea-bb35-665544332211",
-        "characteristic": "8332af20-6d0e-4eea-bb35-665544332211",
-        "response": {
-          "service": "8332af20-6d0e-4eea-bb35-665544332211",
-          "characteristic": "8332af20-6d0e-4eea-bb35-665544332211",
-          "template": "43348888 03 00 ${skip:u8} 00 ${crc16modbus,at=-2}"
-        }
+        "response": "43348888 03 00 ${skip:u8} 00 ${crc16modbus,at=-2}"
       }
     },
     "temperature": {
@@ -113,22 +95,12 @@
       },
       "write": {
         "op": "write",
-        "service": "8332af20-6d0e-4eea-bb35-665544332211",
-        "characteristic": "8332af20-6d0e-4eea-bb35-665544332211",
-        "writeMode": "withResponse",
-        "request": {
-          "template": "34438888 06 00 ${length:u8} ${value:u8} ${property.fanSpeed:u8} ${crc16modbus}"
-        }
+        "mode": "withResponse",
+        "cmd": "34438888 06 00 ${length:u8} ${value:u8} ${property.fanSpeed:u8} ${crc16modbus}"
       },
       "notify": {
         "op": "subscribe",
-        "service": "8332af20-6d0e-4eea-bb35-665544332211",
-        "characteristic": "8332af20-6d0e-4eea-bb35-665544332211",
-        "response": {
-          "service": "8332af20-6d0e-4eea-bb35-665544332211",
-          "characteristic": "8332af20-6d0e-4eea-bb35-665544332211",
-          "template": "43348888 06 00 ${skip:u8} 00 ${crc16modbus,at=-2}"
-        }
+        "response": "43348888 06 00 ${skip:u8} 00 ${crc16modbus,at=-2}"
       }
     },
     "fanSpeed": {
@@ -150,22 +122,12 @@
       },
       "write": {
         "op": "write",
-        "service": "8332af20-6d0e-4eea-bb35-665544332211",
-        "characteristic": "8332af20-6d0e-4eea-bb35-665544332211",
-        "writeMode": "withResponse",
-        "request": {
-          "template": "34438888 06 00 ${length:u8} ${property.temperature:u8} ${value:u8} ${crc16modbus}"
-        }
+        "mode": "withResponse",
+        "cmd": "344388880600${length:u8}${property.temperature:u8}${value:u8}${crc16modbus}"
       },
       "notify": {
         "op": "subscribe",
-        "service": "8332af20-6d0e-4eea-bb35-665544332211",
-        "characteristic": "8332af20-6d0e-4eea-bb35-665544332211",
-        "response": {
-          "service": "8332af20-6d0e-4eea-bb35-665544332211",
-          "characteristic": "8332af20-6d0e-4eea-bb35-665544332211",
-          "template": "43348888 06 00 ${skip:u8} 00 ${crc16modbus,at=-2}"
-        }
+        "response": "433488880600${skip:u8}00${crc16modbus,at=-2}"
       }
     },
     "timer": {
@@ -244,22 +206,12 @@
       },
       "write": {
         "op": "write",
-        "service": "8332af20-6d0e-4eea-bb35-665544332211",
-        "characteristic": "8332af20-6d0e-4eea-bb35-665544332211",
-        "writeMode": "withResponse",
-        "request": {
-          "template": "34438888 04 00 ${length:u8} ${value:object,fields=index:u8;enabled:bool8;startHour:u8;startMinute:u8;endHour:u8;endMinute:u8;sunriseSunsetEnabled:bool8;sunriseMinutes:u8;sunsetMinutes:u8} ${crc16modbus}"
-        }
+        "mode": "withResponse",
+        "cmd": "34438888 04 00 ${length:u8} ${value:object,fields=index:u8;enabled:bool8;startHour:u8;startMinute:u8;endHour:u8;endMinute:u8;sunriseSunsetEnabled:bool8;sunriseMinutes:u8;sunsetMinutes:u8} ${crc16modbus}"
       },
       "notify": {
         "op": "subscribe",
-        "service": "8332af20-6d0e-4eea-bb35-665544332211",
-        "characteristic": "8332af20-6d0e-4eea-bb35-665544332211",
-        "response": {
-          "service": "8332af20-6d0e-4eea-bb35-665544332211",
-          "characteristic": "8332af20-6d0e-4eea-bb35-665544332211",
-          "template": "43348888 04 00 ${skip:u8} 00 ${crc16modbus,at=-2}"
-        }
+        "response": "43348888 04 00 ${skip:u8} 00 ${crc16modbus,at=-2}"
       }
     },
     "time": {
@@ -293,22 +245,12 @@
       },
       "write": {
         "op": "write",
-        "service": "8332af20-6d0e-4eea-bb35-665544332211",
-        "characteristic": "8332af20-6d0e-4eea-bb35-665544332211",
-        "writeMode": "withResponse",
-        "request": {
-          "template": "34438888 01 00 ${length:u8} ${value:object,fields=hour:u8;minute:u8;second:u8} ${crc16modbus}"
-        }
+        "mode": "withResponse",
+        "cmd": "34438888 01 00 ${length:u8} ${value:object,fields=hour:u8;minute:u8;second:u8} ${crc16modbus}"
       },
       "notify": {
         "op": "subscribe",
-        "service": "8332af20-6d0e-4eea-bb35-665544332211",
-        "characteristic": "8332af20-6d0e-4eea-bb35-665544332211",
-        "response": {
-          "service": "8332af20-6d0e-4eea-bb35-665544332211",
-          "characteristic": "8332af20-6d0e-4eea-bb35-665544332211",
-          "template": "43348888 01 00 ${skip:u8} 00 ${crc16modbus,at=-2}"
-        }
+        "response": "43348888 01 00 ${skip:u8} 00 ${crc16modbus,at=-2}"
       }
     }
   }

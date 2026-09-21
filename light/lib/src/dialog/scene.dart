@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:light/src/core/device/spec/value_spec.dart';
 
 import '../app/theme.dart';
-import '../core/device/device_model_catalog.dart';
-import '../core/device_model.dart';
+import '../core/device/device.dart';
+import '../core/device/spec/ui_spec.dart';
+import '../core/device/types.dart';
 import '../data/color_presets.dart';
 import '../data/models.dart';
 
@@ -11,7 +13,7 @@ Future<ScenePreset?> showSceneEditor(
   BuildContext context, {
   required String newId,
   ScenePreset? scene,
-  DeviceModel? model,
+      required Device device,
   Map<String, Object?>? initialProperties,
 }) {
   return showDialog<ScenePreset>(
@@ -19,7 +21,7 @@ Future<ScenePreset?> showSceneEditor(
     builder: (context) => _SceneEditorDialog(
       newId: newId,
       scene: scene,
-      model: model,
+      device: device,
       initialProperties: initialProperties,
     ),
   );
@@ -29,15 +31,14 @@ class _SceneEditorDialog extends StatefulWidget {
   const _SceneEditorDialog({
     required this.newId,
     this.scene,
-    this.model,
+    required this.device,
     this.initialProperties,
   });
 
   final String newId;
   final ScenePreset? scene;
 
-  /// 目标设备的模型定义，缺省时按内置 AT5 处理
-  final DeviceModel? model;
+  final Device device;
 
   /// 用当前灯光数值新建配色时传入的属性值
   final Map<String, Object?>? initialProperties;
@@ -58,7 +59,7 @@ class _SceneEditorDialogState extends State<_SceneEditorDialog> {
 
   late final TextEditingController _nameController;
   late final TextEditingController _subtitleController;
-  late final DeviceModel _model;
+  late final Device _model;
   late final String? _colorProperty;
   late final String? _powerProperty;
   late final Map<String, Object?> _baseProperties;
@@ -69,7 +70,7 @@ class _SceneEditorDialogState extends State<_SceneEditorDialog> {
   @override
   void initState() {
     super.initState();
-    _model = widget.model ?? DeviceModelCatalog.instance.defaultModel;
+    _model = widget.device;
     _colorProperty = _findColorProperty();
     _powerProperty = _findPowerProperty();
     final scene = widget.scene;

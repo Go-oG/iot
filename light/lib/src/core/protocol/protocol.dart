@@ -1,9 +1,7 @@
 import 'dart:convert' as convert;
 import 'dart:typed_data';
 
-import 'wire.dart';
-
-export 'wire.dart';
+import '../wire_enum.dart';
 
 /// 主题层级：`iot/{version}/{gatewayId}/{leaf}`
 ///
@@ -30,9 +28,8 @@ enum GatewayTopic implements WireEnum {
 
 /// 协议帧与消息体使用的字段名，对应协议第 5、7 节
 ///
-/// 这些键只在拼装或解析 JSON 时通过 [wire] 使用，代码内一律引用枚举。
+/// 这些键只在拼装或解析 JSON 时通过 [wire] 使用，代码内一律引用枚举
 enum GatewayField implements WireEnum {
-  // 帧
   v('v'),
   gatewayId('gatewayId'),
   clientId('clientId'),
@@ -131,7 +128,6 @@ enum GatewayField implements WireEnum {
   final String wire;
 }
 
-/// 网关协议版本与主题
 class GatewayTopics {
   const GatewayTopics(this.gatewayId);
   final String gatewayId;
@@ -144,7 +140,7 @@ class GatewayTopics {
 
   String get prefixOfGateway => prefix(gatewayId);
 
-  /// App 与云端下发请求
+  /// App向云端下发请求
   String get down => '$prefixOfGateway/${GatewayTopic.down.wire}';
 
   /// 网关上报响应、事件与状态
@@ -209,7 +205,7 @@ enum GatewayOption implements WireEnum {
   static GatewayOption? valueOf(Object? raw) => wireValueOf(values, raw);
 }
 
-/// 值编码，默认 hex，对应协议第 6 节
+/// 值编码，默认 hex
 enum ValueFormat implements WireEnum {
   hex('hex'),
   base64('base64'),
@@ -273,7 +269,7 @@ class GatewayUuid {
   }
 }
 
-/// 稳定错误码，对应协议第 27 节，底层错误码放在 data.nativeCode
+/// 错误码 底层错误码放在 data.nativeCode
 enum GatewayErrorCode {
   ok(0, 'OK'),
   invalidRequest(1001, 'INVALID_REQUEST'),
@@ -316,7 +312,7 @@ enum GatewayErrorCode {
   static String labelOf(int? code) => of(code).label;
 }
 
-/// 网关返回的错误，App 按稳定错误码判断处理方式
+/// 网关返回的错误，App 按错误码判断处理方式
 class GatewayError implements Exception {
   /// 用协议里声明过的错误码构造
   GatewayError(GatewayErrorCode kind, this.message, {this.nativeCode})
@@ -352,28 +348,6 @@ class GatewayError implements Exception {
   String toString() => '网关错误 $code（${kind.label}）：$message';
 }
 
-/// 连接状态取值
-enum GatewayStatus implements WireEnum {
-  disconnected('disconnected'),
-  connecting('connecting'),
-  connected('connected'),
-  disconnecting('disconnecting');
-
-  const GatewayStatus(this.wire);
-
-  @override
-  final String wire;
-
-  /// 面向界面的中文说明
-  String get label => switch (this) {
-    GatewayStatus.disconnected => '未连接',
-    GatewayStatus.connecting => '连接中',
-    GatewayStatus.connected => '已连接',
-    GatewayStatus.disconnecting => '断开中',
-  };
-
-  static GatewayStatus? valueOf(Object? raw) => wireValueOf(values, raw);
-}
 
 /// Notify 投递模式
 enum GatewayDelivery implements WireEnum {

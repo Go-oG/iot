@@ -1,0 +1,259 @@
+{
+  "id": "设备ID",
+  "name": "设备名字",
+  "properties": {
+    "service": "BLE service uuid 可选",
+    "characteristic": "BLE characteristic uuid 可选",
+    "power": {
+      "name": "名字",
+      "type": "bool",
+      "default": false,
+      "ui": {
+        "renderer": "switch"
+      },
+      "write": {
+        "service": "BLE service uuid 可选，没有取上级",
+        "characteristic": "BLE characteristic uuid 可选，没有取上级",
+        "op": "write",
+        "mode": "withResponse",
+        "cmd": "344388880500${length:u8}${value:bool8}${crc16modbus}"
+      },
+      "notify": {
+        "op": "subscribe",
+        "response": "433488880500${skip:u8}00${crc16modbus,at=-2}"
+      }
+    },
+    "channels": {
+      "name": "五路灯光",
+      "type": "object",
+      "default": {
+        "red": 15,
+        "green": 15,
+        "blue": 17,
+        "white": 25,
+        "uv": 0
+      },
+      "properties": {
+        "red": {
+          "type": "int",
+          "constraints": {
+            "min": 0,
+            "max": 100
+          }
+        },
+        "green": {
+          "type": "int",
+          "constraints": {
+            "min": 0,
+            "max": 100
+          }
+        },
+        "blue": {
+          "type": "int",
+          "constraints": {
+            "min": 0,
+            "max": 100
+          }
+        },
+        "white": {
+          "type": "int",
+          "constraints": {
+            "min": 0,
+            "max": 100
+          }
+        },
+        "uv": {
+          "type": "int",
+          "constraints": {
+            "min": 0,
+            "max": 100
+          }
+        }
+      },
+      "ui": {
+        "renderer": "color"
+      },
+      "write": {
+        "op": "write",
+        "mode": "withResponse",
+        "cmd": "344388880300${length:u8}${value:object,fields=red:u8;green:u8;blue:u8;white:u8;uv:u8}${crc16modbus}"
+      },
+      "notify": {
+        "op": "subscribe",
+        "response": "433488880300${skip:u8}00${crc16modbus,at=-2}"
+      }
+    },
+    "temperature": {
+      "name": "温控",
+      "type": "int",
+      "constraints": {
+        "min": 20,
+        "max": 80
+      },
+      "unit": "℃",
+      "default": 31,
+      "ui": {
+        "renderer": "slider"
+      },
+      "write": {
+        "op": "write",
+        "mode": "withResponse",
+        "cmd": "344388880600${length:u8}${value:u8}${attr.fanSpeed:u8}${crc16modbus}"
+      },
+      "notify": {
+        "op": "subscribe",
+        "response": "433488880600${skip:u8}00${crc16modbus,at=-2}"
+      }
+    },
+    "fanSpeed": {
+      "name": "风扇档位",
+      "type": "enum",
+      "default": 1,
+      "values": [
+        {
+          "value": 1,
+          "label": "低速"
+        },
+        {
+          "value": 2,
+          "label": "高速"
+        }
+      ],
+      "ui": {
+        "renderer": "segmented"
+      },
+      "write": {
+        "op": "write",
+        "mode": "withResponse",
+        "cmd": "344388880600${length:u8}${property.temperature:u8}${value:u8}${crc16modbus}"
+      },
+      "notify": {
+        "op": "subscribe",
+        "response": "433488880600${skip:u8}00${crc16modbus,at=-2}"
+      }
+    },
+    "timer": {
+      "name": "定时设置",
+      "type": "object",
+      "default": {
+        "index": 1,
+        "enabled": false,
+        "startHour": 8,
+        "startMinute": 0,
+        "endHour": 20,
+        "endMinute": 0,
+        "sunriseSunsetEnabled": false,
+        "sunriseMinutes": 0,
+        "sunsetMinutes": 0
+      },
+      "properties": {
+        "index": {
+          "type": "int",
+          "constraints": {
+            "min": 1,
+            "max": 2
+          }
+        },
+        "enabled": {
+          "type": "bool"
+        },
+        "startHour": {
+          "type": "int",
+          "constraints": {
+            "min": 0,
+            "max": 23
+          }
+        },
+        "startMinute": {
+          "type": "int",
+          "constraints": {
+            "min": 0,
+            "max": 59
+          }
+        },
+        "endHour": {
+          "type": "int",
+          "constraints": {
+            "min": 0,
+            "max": 23
+          }
+        },
+        "endMinute": {
+          "type": "int",
+          "constraints": {
+            "min": 0,
+            "max": 59
+          }
+        },
+        "sunriseSunsetEnabled": {
+          "type": "bool"
+        },
+        "sunriseMinutes": {
+          "type": "int",
+          "constraints": {
+            "min": 0,
+            "max": 255
+          }
+        },
+        "sunsetMinutes": {
+          "type": "int",
+          "constraints": {
+            "min": 0,
+            "max": 255
+          }
+        }
+      },
+      "ui": {
+        "renderer": "scheduleList"
+      },
+      "write": {
+        "op": "write",
+        "mode": "withResponse",
+        "request": "344388880400${length:u8}${value:object,fields=index:u8;enabled:bool8;startHour:u8;startMinute:u8;endHour:u8;endMinute:u8;sunriseSunsetEnabled:bool8;sunriseMinutes:u8;sunsetMinutes:u8}${crc16modbus}"
+      },
+      "notify": {
+        "op": "subscribe",
+        "response": "433488880400${skip:u8}00${crc16modbus,at=-2}"
+      }
+    },
+    "time": {
+      "name": "时间同步",
+      "type": "object",
+      "properties": {
+        "hour": {
+          "type": "int",
+          "constraints": {
+            "min": 0,
+            "max": 23
+          }
+        },
+        "minute": {
+          "type": "int",
+          "constraints": {
+            "min": 0,
+            "max": 59
+          }
+        },
+        "second": {
+          "type": "int",
+          "constraints": {
+            "min": 0,
+            "max": 59
+          }
+        }
+      },
+      "ui": {
+        "renderer": "hidden"
+      },
+      "write": {
+        "op": "write",
+        "mode": "withResponse",
+        "cmd": "344388880100${length:u8}${value:object,fields=hour:u8;minute:u8;second:u8}${crc16modbus}"
+      },
+      "notify": {
+        "op": "subscribe",
+        "response": "433488880100${skip:u8}00${crc16modbus,at=-2}"
+      }
+    }
+  }
+}

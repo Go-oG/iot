@@ -26,11 +26,11 @@ App 不再直接扫描或连接 BLE：手机只与 MQTT Broker 通信，蓝牙�
 
 ## 模块化设备控制
 
-所有设备都使用设备模型 JSON 接入：模型声明属性、读写通知操作、请求帧字段、长度与校验、响应匹配和界面渲染器，通用层按模型渲染控件、编码下发并解析上报。模型定义见 [device_model.dart](lib/src/core/device_model.dart)，会话见 [device_model_session.dart](lib/src/core/device/device_model_session.dart)，接入方法见 [设备模块与设备模型](docs/device-modules.md)，入口在 **设备页 → 编辑设备模型**。
+所有设备都由唯一的 `Device` 表示：`Device.fromJson` 直接根据设备 JSON 创建对象，声明属性、读写通知、帧模板、响应匹配和界面渲染器，并同时提供连接、下发和上报状态能力。实现见 [device.dart](lib/src/core/device.dart)，接入方法见 [设备模块与设备模型](docs/device-modules.md)，入口在 **设备页 → 编辑设备配置**。
 
 帧定义使用字符串模板，例如 `AA55 ${length:u8} ${seq:u8} 2103 ${value:u16be,scale=0.1} ${crc16modbus}`：出现顺序即帧内顺序，长度与校验范围按字段名引用，模型载入时编译成运行时结构。
 
-配色与计划同样保存设备属性值：应用配色、切换计划、调整输出上限都经设备模型会话下发，控制器不保存灯光面板状态。
+配色与计划同样保存设备属性值：应用配色、切换计划、调整输出上限都经 `Device` 下发，控制器不保存灯光面板状态。
 
 ## 设备模型与架构分析
 

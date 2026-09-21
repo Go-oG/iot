@@ -2,9 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:light/src/core/protocol/model.dart';
 
 import '../../app/scope.dart';
-import '../../core/protocol/client.dart';
 import '../../core/protocol/protocol.dart';
 
 class DeviceDebugPage extends StatefulWidget {

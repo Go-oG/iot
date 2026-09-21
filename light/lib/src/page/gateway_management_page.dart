@@ -146,7 +146,7 @@ class _GatewayManagementPageState extends State<GatewayManagementPage> {
             '网关 ${AppScope.controller.remoteSettings?.gatewayId ?? '未配置'}',
             style: Theme.of(context).textTheme.titleLarge,
           ),
-          Text(registry.snapshot.deviceOnline ? 'MQTT 在线' : 'MQTT 离线'),
+          Text(registry.snapshot.mqttIsOnline ? 'MQTT 在线' : 'MQTT 离线'),
           if (_busy) const LinearProgressIndicator(),
           if (_message != null)
             Padding(padding: const EdgeInsets.symmetric(vertical: 12), child: SelectableText(_message!)),

@@ -1,9 +1,9 @@
-import 'device_configuration.dart';
 import 'device_key.dart';
+import 'device_template.dart';
 
 /// 配色：直接保存设备模型里的属性值
 ///
-/// 应用配色就是把这里的属性值经 DeviceModelSession 写进设备，
+/// 应用配色就是把这里的属性值经 Device 写进设备，
 /// 因此本机不再保存灯光面板状态，也不再按设备私有结构序列化
 class ScenePreset {
   const ScenePreset({
@@ -237,6 +237,7 @@ class SavedDevice {
     required this.room,
     required this.lastConnectedAt,
     this.gatewayId = '',
+    this.modelId,
   });
 
   final String id;
@@ -246,11 +247,15 @@ class SavedDevice {
   final String room;
   final DateTime lastConnectedAt;
 
+  /// 引用的协议模板标识，为空时由控制器按内置模板或匹配规则解析
+  final String? modelId;
+
   SavedDevice copyWith({
     String? gatewayId,
     String? name,
     String? room,
     DateTime? lastConnectedAt,
+    String? modelId,
   }) {
     return SavedDevice(
       id: id,
@@ -258,6 +263,7 @@ class SavedDevice {
       name: name ?? this.name,
       room: room ?? this.room,
       lastConnectedAt: lastConnectedAt ?? this.lastConnectedAt,
+      modelId: modelId ?? this.modelId,
     );
   }
 
@@ -268,6 +274,7 @@ class SavedDevice {
       'name': name,
       'room': room,
       'lastConnectedAt': lastConnectedAt.toIso8601String(),
+      if (modelId != null && modelId!.isNotEmpty) 'modelId': modelId,
     };
   }
 
@@ -277,6 +284,10 @@ class SavedDevice {
       gatewayId: _string(json['gatewayId']),
       name: _string(json['name']),
       room: _string(json['room'], '未分组'),
+      modelId:
+          json['modelId'] is String && (json['modelId'] as String).isNotEmpty
+          ? json['modelId'] as String
+          : null,
       lastConnectedAt:
           DateTime.tryParse(_string(json['lastConnectedAt'])) ??
           DateTime.fromMillisecondsSinceEpoch(0),
@@ -284,36 +295,33 @@ class SavedDevice {
   }
 }
 
-/// 本机数据：配色、计划、设备与设备模型，全部是设备无关的属性值
+/// 本机数据：配色、计划、设备绑定与协议模板
 class AppDataBundle {
   const AppDataBundle({
     required this.scenes,
     required this.schedules,
     required this.devices,
     required this.exportedAt,
-    this.deviceConfigurations = const [],
+    this.deviceTemplates = const [],
   });
 
   final List<ScenePreset> scenes;
   final List<SchedulePlan> schedules;
   final List<SavedDevice> devices;
   final DateTime exportedAt;
-  final List<DeviceConfiguration> deviceConfigurations;
+  final List<DeviceTemplate> deviceTemplates;
 
   Map<String, Object?> toJson() {
     return {
-      'schemaVersion': 4,
+      'schemaVersion': 5,
       'kind': 'backup',
       'exportedAt': exportedAt.toIso8601String(),
       'scenes': scenes.map((item) => item.toJson()).toList(),
       'schedules': schedules.map((item) => item.toJson()).toList(),
       'devices': devices.map((item) => item.toJson()).toList(),
-      'deviceConfigurations': deviceConfigurations
+      'deviceTemplates': deviceTemplates
           .map(
-            (item) => {
-              'gatewayId': item.gatewayId,
-              'configuration': item.toJson(),
-            },
+            (item) => {'gatewayId': item.gatewayId, 'template': item.toJson()},
           )
           .toList(),
     };
@@ -321,8 +329,8 @@ class AppDataBundle {
 
   factory AppDataBundle.fromJson(Map<String, Object?> json) {
     final version = _integer(json['schemaVersion']);
-    // 3 是旧的面板状态版本，导入时按属性值转换
-    if (version != 3 && version != 4) {
+    // 3 是旧的面板状态版本，4 使用旧字段名 deviceConfigurations
+    if (version != 3 && version != 4 && version != 5) {
       throw const FormatException('不支持的备份文件版本');
     }
     return AppDataBundle(
@@ -335,17 +343,18 @@ class AppDataBundle {
       devices: _list(json['devices'])
           .map((item) => SavedDevice.fromJson(_map(item)))
           .toList(),
-      deviceConfigurations: switch (json['deviceConfigurations']) {
+      deviceTemplates: switch (json['deviceTemplates'] ??
+          json['deviceConfigurations']) {
         null => const [],
         List values =>
           values
               .map(
-                (item) => DeviceConfiguration.fromJson(
-                  _map(_map(item)['configuration']),
+                (item) => DeviceTemplate.fromJson(
+                  _map(_map(item)['template'] ?? _map(item)['configuration']),
                 ).withGateway(_string(_map(item)['gatewayId'])),
               )
               .toList(),
-        _ => throw const FormatException('deviceConfigurations 必须是数组'),
+        _ => throw const FormatException('deviceTemplates 必须是数组'),
       },
       exportedAt:
           DateTime.tryParse(_string(json['exportedAt'])) ?? DateTime.now(),

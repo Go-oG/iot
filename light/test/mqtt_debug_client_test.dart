@@ -1,8 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:light/src/core/protocol/mqtt_debug_client.dart';
-import 'package:light/src/data/remote_settings.dart';
+import 'package:light/src/core/mqtt/mqtt_debug_client.dart';
+import 'package:light/src/core/mqtt/mqtt_config.dart';
 
 void main() {
   test('校验订阅通配符、发布主题和 UTF-8 长度', () {
@@ -39,7 +39,7 @@ void main() {
   });
 
   test('真实 Broker 支持自定义主题、中文消息、空消息、取消订阅及重新连接', () async {
-    const settings = RemoteSettings(
+    const settings = MqttConfig(
       host: '127.0.0.1',
       port: 18883,
       tls: false,
