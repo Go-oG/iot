@@ -14,7 +14,7 @@ class MqttConfig {
     this.enabled = true,
     this.bluetoothDeviceId = '',
     this.autoReconnect = false,
-    this.keepAlivePeriod = 20,
+    this.keepAlivePeriod = 30,
     this.connectTimeoutPeriod = 8000,
     this.log = false,
   });
@@ -46,6 +46,10 @@ class MqttConfig {
     gatewayId: gatewayId,
     enabled: enabled,
     bluetoothDeviceId: id,
+    autoReconnect: autoReconnect,
+    keepAlivePeriod: keepAlivePeriod,
+    connectTimeoutPeriod: connectTimeoutPeriod,
+    log: log,
   );
 
   void validate() {

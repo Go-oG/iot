@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:light/src/app/scope.dart';
 
-import '../app/router.dart';
 import '../app/theme.dart';
 import '../core/protocol/protocol.dart';
 import '../core/mqtt/mqtt_config.dart';
@@ -50,7 +49,7 @@ class _MqttSettingsPageState extends State<MqttSettingsPage> {
   String? get _topicPreview {
     final id = _device.text.trim();
     if (!RegExp(r'^[a-zA-Z0-9_-]{1,64}$').hasMatch(id)) return null;
-    final topics = GatewayTopics(id);
+    final topics = MqttTopics(id);
     return '订阅 ${topics.up}\n订阅 ${topics.presence}\n发布 ${topics.down}';
   }
 
@@ -59,17 +58,7 @@ class _MqttSettingsPageState extends State<MqttSettingsPage> {
     return PopScope(
       canPop: !_saving,
       child: Scaffold(
-        appBar: AppBar(
-          title: const Text('MQTT 配置'),
-          actions: [
-            TextButton(
-              onPressed: _saving || AppScope.controller.remoteSettings == null
-                  ? null
-                  : context.pushMqttDebug,
-              child: const Text('消息调试'),
-            ),
-          ],
-        ),
+        appBar: AppBar(title: const Text('MQTT 配置')),
         body: SafeArea(
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(16),
@@ -150,8 +139,8 @@ class _MqttSettingsPageState extends State<MqttSettingsPage> {
                           enableSuggestions: false,
                         ),
                         const SizedBox(height: 16),
-                        const Text('所有设备管理和控制均经 MQTT 网关执行，请在设备页扫描并登记设备。'),
-                        const Text('连接信息保存在本机安全存储中，不随配色备份导出。'),
+                        const Text('所有设备管理和控制均经 MQTT 网关执行，请在设备页扫描并登记设备'),
+                        const Text('连接信息保存在本机安全存储中，不随配色备份导出'),
                       ],
                     ),
                   ),

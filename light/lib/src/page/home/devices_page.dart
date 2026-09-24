@@ -316,7 +316,7 @@ class _DevicesPageState extends State<DevicesPage> {
           (device[GatewayField.deviceId.wire] ??
                   device[GatewayField.device.wire])
               as String;
-      final state = remote.client.device(id);
+      final state = remote.client.deviceOf(id);
       final runtime = states
           .where(
             (s) =>

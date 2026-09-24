@@ -94,7 +94,7 @@ class _DeviceDebugPageState extends State<DeviceDebugPage> {
   Widget build(BuildContext context) {
     final state = AppScope.controller.gatewayState;
     final ready = state.connected && state.gatewayOnline && !_busy;
-    final cached = state.device(widget.deviceId)?.characteristics ?? {};
+    final cached = state.deviceOf(widget.deviceId)?.characteristics ?? {};
     return Scaffold(
       appBar: AppBar(title: const Text('MQTT 设备读写')),
       body: ListView(

@@ -351,31 +351,23 @@ cJSON *gw_manager_status(void) {
     return root;
 }
 
-static esp_err_t send_json(httpd_req_t *req, cJSON *json) {
-    char *text = json ? cJSON_PrintUnformatted(json) : NULL;
-    cJSON_Delete(json);
-    if (!text) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no_memory");
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    esp_err_t err = httpd_resp_sendstr(req, text);
-    cJSON_free(text);
-    return err;
-}
-
-static esp_err_t error_json(httpd_req_t *req, const char *error) {
-    httpd_resp_set_status(req, "400 Bad Request");
-    cJSON *json = cJSON_CreateObject();
-    cJSON_AddBoolToObject(json, "ok", false);
-    cJSON_AddStringToObject(json, "error", error);
-    return send_json(req, json);
-}
-
-static esp_err_t denied_json(httpd_req_t *req) {
-    httpd_resp_set_status(req, "403 Forbidden");
-    cJSON *json = cJSON_CreateObject();
-    cJSON_AddBoolToObject(json, "ok", false);
-    cJSON_AddStringToObject(json, "error", "cross_origin_denied");
-    return send_json(req, json);
+static cJSON *seen_json(void) {
+    seen_device_t *snapshot = malloc(sizeof(s_seen));
+    if (!snapshot) return NULL;
+    lock(); memcpy(snapshot, s_seen, sizeof(s_seen)); unlock();
+    cJSON *root = cJSON_CreateObject(), *devices = cJSON_AddArrayToObject(root, "devices");
+    int64_t now = now_ms();
+    for (unsigned i = 0; i < GW_SEEN_LIMIT; ++i) if (snapshot[i].used) {
+        cJSON *o = cJSON_CreateObject(); char addr[18]; gw_address_format(snapshot[i].addr, addr);
+        cJSON_AddStringToObject(o, "device", addr);
+        cJSON_AddStringToObject(o, "name", snapshot[i].name);
+        cJSON_AddNumberToObject(o, "addressType", snapshot[i].address_type);
+        cJSON_AddNumberToObject(o, "rssi", snapshot[i].rssi);
+        cJSON_AddNumberToObject(o, "lastSeenAgoMs", now - snapshot[i].seen_ms);
+        cJSON_AddItemToArray(devices, o);
+    }
+    free(snapshot);
+    return root;
 }
 
 // 写操作只接受同源且声明 JSON 的请求，避免其它网页借浏览器代提交配置
@@ -392,50 +384,9 @@ bool gw_http_json_post_allowed(httpd_req_t *req) {
     return scheme && !strcasecmp(scheme + 3, host);
 }
 
-static cJSON *read_json(httpd_req_t *req, int limit) {
-    if (req->content_len <= 0 || req->content_len > limit) return NULL;
-    char *text = malloc((size_t)req->content_len + 1);
-    if (!text) return NULL;
-    int pos = 0, timeouts = 0;
-    while (pos < req->content_len) {
-        int n = httpd_req_recv(req, text + pos, req->content_len - pos);
-        if (n == HTTPD_SOCK_ERR_TIMEOUT && ++timeouts <= 3) continue;
-        if (n <= 0) { free(text); return NULL; }
-        pos += n;
-    }
-    text[pos] = 0;
-    cJSON *json = cJSON_ParseWithLengthOpts(text, (size_t)pos + 1, NULL, true);
-    free(text);
-    return json;
-}
-
-static esp_err_t devices_get(httpd_req_t *req) { return send_json(req, gw_manager_status()); }
-static esp_err_t diagnostics_get(httpd_req_t *req) { return send_json(req, gw_adapter_diagnostics()); }
-
-static esp_err_t backup_get(httpd_req_t *req) {
-    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=ble-devices.json");
-    return send_json(req, gw_registry_json(&s_registry));
-}
-
-static esp_err_t devices_post(httpd_req_t *req) {
-    if (!gw_http_json_post_allowed(req)) return denied_json(req);
-    cJSON *registry = read_json(req, GW_BACKUP_MAX_BYTES);
-    if (!registry) return error_json(req, "invalid_json");
-    cJSON *data = cJSON_CreateObject(), *result = NULL;
-    cJSON_AddStringToObject(data, "action", "save");
-    cJSON_AddItemToObject(data, "registry", registry);
-    const char *error = NULL;
-    int code = gw_manager_manage(data, &result, &error);
-    cJSON_Delete(data);
-    if (code) { cJSON_Delete(result); return error_json(req, error ? error : "save_failed"); }
-    cJSON_AddBoolToObject(result, "ok", true);
-    esp_err_t sent = send_json(req, result);
-    gw_adapter_restart();
-    return sent;
-}
-
-// MQTT 管理入口复用登记校验和 NVS，不绕过设备登记策略
+// HTTP 与 MQTT 复用同一管理入口，统一执行登记校验和 NVS 写入
 int gw_manager_manage(const cJSON *data, cJSON **result, const char **error) {
+    if (!cJSON_IsObject(data)) { *error = "invalid_data"; return 1003; }
     const cJSON *a = cJSON_GetObjectItemCaseSensitive(data, "action");
     if (!cJSON_IsString(a)) { *error = "missing_action"; return 1003; }
     const char *action = a->valuestring;
@@ -443,13 +394,14 @@ int gw_manager_manage(const cJSON *data, cJSON **result, const char **error) {
     if (!strcmp(action, "backup")) { *result = gw_registry_json(&s_registry); return *result ? 0 : 2001; }
     if (!strcmp(action, "diagnostics")) { *result = gw_adapter_diagnostics(); return *result ? 0 : 2001; }
     if (!strcmp(action, "config.get")) return gw_adapter_config(NULL, result, error);
+    if (!strcmp(action, "seen")) { *result = seen_json(); return *result ? 0 : 2001; }
     const cJSON *device = cJSON_GetObjectItemCaseSensitive(data, "device");
     if (!strcmp(action, "pause") || !strcmp(action, "resume")) {
         uint8_t addr[6];
         if (!cJSON_IsString(device) || !gw_address_parse(device->valuestring, addr) || index_of(addr) < 0) {
             *error = "device_not_registered"; return 3004;
         }
-        if (gw_adapter_protocol_owned(addr)) { *error = "device_controlled_by_v1_use_connect_disconnect"; return 2001; }
+        if (gw_adapter_protocol_owned(addr)) { *error = "device_controlled_by_use_connect_disconnect"; return 2001; }
         gw_manager_pause(addr, !strcmp(action, "pause"));
         *result = gw_manager_status(); return *result ? 0 : 2001;
     }
@@ -515,50 +467,6 @@ int gw_manager_manage(const cJSON *data, cJSON **result, const char **error) {
     return 0;
 }
 
-static esp_err_t action_post(httpd_req_t *req) {
-    if (!gw_http_json_post_allowed(req)) return denied_json(req);
-    cJSON *json = read_json(req, 512);
-    cJSON *op = cJSON_GetObjectItemCaseSensitive(json, "op");
-    cJSON *device = cJSON_GetObjectItemCaseSensitive(json, "device");
-    bool ok = false;
-    if (cJSON_IsString(op)) {
-        if (!strcmp(op->valuestring, "scan")) { lock(); s_scan_requested = true; unlock(); ok = true; }
-        else if (cJSON_IsString(device)) {
-            uint8_t addr[6];
-            if (gw_address_parse(device->valuestring, addr) && index_of(addr) >= 0 &&
-                (!strcmp(op->valuestring, "pause") || !strcmp(op->valuestring, "resume"))) {
-                if (gw_adapter_protocol_owned(addr)) {
-                    cJSON_Delete(json); return error_json(req, "device_controlled_by_v1");
-                }
-                gw_manager_pause(addr, !strcmp(op->valuestring, "pause")); ok = true;
-            }
-        }
-    }
-    cJSON_Delete(json);
-    if (!ok) return error_json(req, "invalid_action");
-    json = cJSON_CreateObject(); cJSON_AddBoolToObject(json, "ok", true);
-    return send_json(req, json);
-}
-
-static esp_err_t seen_get(httpd_req_t *req) {
-    seen_device_t *snapshot = malloc(sizeof(s_seen));
-    if (!snapshot) return error_json(req, "no_memory");
-    lock(); memcpy(snapshot, s_seen, sizeof(s_seen)); unlock();
-    cJSON *root = cJSON_CreateObject(), *devices = cJSON_AddArrayToObject(root, "devices");
-    int64_t now = now_ms();
-    for (unsigned i = 0; i < GW_SEEN_LIMIT; ++i) if (snapshot[i].used) {
-        cJSON *o = cJSON_CreateObject(); char addr[18]; gw_address_format(snapshot[i].addr, addr);
-        cJSON_AddStringToObject(o, "device", addr);
-        cJSON_AddStringToObject(o, "name", snapshot[i].name);
-        cJSON_AddNumberToObject(o, "addressType", snapshot[i].address_type);
-        cJSON_AddNumberToObject(o, "rssi", snapshot[i].rssi);
-        cJSON_AddNumberToObject(o, "lastSeenAgoMs", now - snapshot[i].seen_ms);
-        cJSON_AddItemToArray(devices, o);
-    }
-    free(snapshot);
-    return send_json(req, root);
-}
-
 static esp_err_t dashboard_get(httpd_req_t *req) {
     extern const char dashboard_start[] asm("_binary_dashboard_html_start");
     extern const char dashboard_end[] asm("_binary_dashboard_html_end");
@@ -567,14 +475,6 @@ static esp_err_t dashboard_get(httpd_req_t *req) {
 }
 
 void gw_manager_http_register(httpd_handle_t server) {
-    const httpd_uri_t routes[] = {
-        {.uri = "/", .method = HTTP_GET, .handler = dashboard_get},
-        {.uri = "/api/devices", .method = HTTP_GET, .handler = devices_get},
-        {.uri = "/api/devices", .method = HTTP_POST, .handler = devices_post},
-        {.uri = "/api/backup", .method = HTTP_GET, .handler = backup_get},
-        {.uri = "/api/action", .method = HTTP_POST, .handler = action_post},
-        {.uri = "/api/seen", .method = HTTP_GET, .handler = seen_get},
-        {.uri = "/api/diagnostics", .method = HTTP_GET, .handler = diagnostics_get},
-    };
-    for (unsigned i = 0; i < sizeof(routes) / sizeof(routes[0]); ++i) ESP_ERROR_CHECK(httpd_register_uri_handler(server, &routes[i]));
+    const httpd_uri_t route = {.uri = "/", .method = HTTP_GET, .handler = dashboard_get};
+    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &route));
 }

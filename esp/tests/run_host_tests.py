@@ -7,7 +7,7 @@ import tempfile
 root = Path(__file__).resolve().parents[1]
 cjson = root / 'managed_components/espressif__cjson/cJSON'
 source = (root / 'components/device_manager/gateway_manager.c').read_text()
-body = source[source.index('#define GW_SEEN_LIMIT'):source.index('static esp_err_t send_json')]
+body = source[source.index('#define GW_SEEN_LIMIT'):source.index('static cJSON *seen_json')]
 a, b = body.index('void gw_manager_init'), body.index('void gw_manager_pause')
 body = body[:a] + body[b:]
 # HTTP 保存状态不参与调度测试

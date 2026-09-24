@@ -82,7 +82,7 @@ class AppController extends ChangeNotifier {
 
   String get activeDeviceName =>
       _savedName(selectedDeviceId ?? '') ??
-      gatewayState.device(selectedDeviceId ?? '')?.name ??
+      gatewayState.deviceOf(selectedDeviceId ?? '')?.name ??
       selectedDeviceId ??
       '请选择设备';
 
@@ -137,7 +137,7 @@ class AppController extends ChangeNotifier {
 
   /// 按 service UUID 等扫描信息自动匹配协议模板
   String? _matchModelId(String deviceId) {
-    final state = gatewayState.device(deviceId);
+    final state = gatewayState.deviceOf(deviceId);
     final serviceUuids = <String>{
       for (final key in state?.characteristics.keys ?? const <String>{})
         if (key.contains('/')) key.split('/').first,

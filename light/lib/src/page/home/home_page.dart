@@ -121,7 +121,7 @@ class _HomePageState extends State<HomePage> {
     SavedDevice? saved,
   }) {
     final registry = controller.deviceRegistry;
-    final state = remote.client.device(id);
+    final state = remote.client.deviceOf(id);
     final registration = registry.registered[id];
     final entry = registry.stateOf(id);
     final connected =
@@ -174,7 +174,7 @@ class _HomePageState extends State<HomePage> {
     Map<String, Object?>? registration,
   ) {
     if (saved != null && saved.name.trim().isNotEmpty) return saved.name.trim();
-    final remote = controller.gatewayState.device(id)?.name;
+    final remote = controller.gatewayState.deviceOf(id)?.name;
     if (remote != null && remote.trim().isNotEmpty) return remote.trim();
     // 网关登记里的别名，用于展示本机还没保存过的设备
     final alias = registration?[GatewayField.alias.wire];

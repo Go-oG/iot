@@ -287,7 +287,7 @@
         <div class="section-head">
           <h2>已登记设备 <span id="count" class="muted">0 / 32</span></h2>
           <div class="toolbar">
-            <a class="button" href="/api/backup" download>导出设备配置</a
+            <button id="backup">导出设备配置</button
             ><button id="import">导入配置</button
             ><input
               id="file"
@@ -438,7 +438,8 @@
         editing = -1,
         busy = false,
         refreshing = false,
-        rebooting = false;
+        rebooting = false,
+        apiSequence = 0;
       const states = {
         disabled: "已禁用",
         paused: "已暂停",
@@ -453,20 +454,23 @@
         $("message").textContent = text;
         $("message").style.display = text ? "block" : "none";
       }
-      async function api(path, body) {
-        const r = await fetch(
-          path,
-          body === undefined
-            ? { cache: "no-store" }
-            : {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(body),
-              },
-        );
-        const j = await r.json();
-        if (!r.ok || j.ok === false) throw Error(j.error || "请求失败");
-        return j;
+      async function api(op, data) {
+        const request = {
+          v: 1,
+          type: "req",
+          reqId: "http-" + Date.now() + "-" + ++apiSequence,
+          op,
+          data,
+        };
+        const response = await fetch("/api/v1", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(request),
+        });
+        const result = await response.json();
+        if (!response.ok || result.code !== 0)
+          throw Error(result.message || "请求失败");
+        return result.data || {};
       }
       function cell(row, text) {
         const el = document.createElement("td");
@@ -532,8 +536,8 @@
           const ops = cell(tr, "");
           ops.className = "toolbar";
           button(ops, r.paused ? "恢复" : "暂停", () =>
-            api("/api/action", {
-              op: r.paused ? "resume" : "pause",
+            api("manage", {
+              action: r.paused ? "resume" : "pause",
               device: d.device,
             }).then(refresh),
           );
@@ -579,9 +583,9 @@
         refreshing = true;
         try {
           const [d, g, s] = await Promise.all([
-            api("/api/devices"),
-            api("/api/diagnostics"),
-            api("/api/seen"),
+            api("manage", { action: "status" }),
+            api("manage", { action: "diagnostics" }),
+            api("manage", { action: "seen" }),
           ]);
           renderDevices(d);
           renderSeen(s);
@@ -663,7 +667,7 @@
         if (busy) return;
         busy = true;
         try {
-          await api("/api/devices", config);
+          await api("manage", { action: "save", registry: config });
           $("editor").close();
           rebooting = true;
           message(
@@ -727,10 +731,27 @@
       $("cancel").onclick = () => $("editor").close();
       $("add").onclick = () => edit(-1);
       $("refresh").onclick = refresh;
+      $("backup").onclick = async () => {
+        try {
+          const data = await api("manage", { action: "backup" });
+          const url = URL.createObjectURL(
+            new Blob([JSON.stringify(data, null, 2)], {
+              type: "application/json",
+            }),
+          );
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = "ble-devices.json";
+          link.click();
+          URL.revokeObjectURL(url);
+        } catch (e) {
+          message(e.message);
+        }
+      };
       $("scan").onclick = async () => {
         try {
-          await api("/api/action", { op: "scan" });
-          message("扫描已加入调度，将在当前连接尝试结束后执行。");
+          await api("scan", { action: "start", duration: 5000, active: true });
+          message("扫描已启动，结果将在扫描完成后更新。");
           setTimeout(refresh, 6000);
         } catch (e) {
           message(e.message);

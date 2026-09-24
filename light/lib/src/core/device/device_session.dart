@@ -614,12 +614,12 @@ class DeviceSession extends ChangeNotifier {
     final bootId = event.data?['bootId'];
     final sequence = event.data?['seq'];
     final cursor = _cursor;
+    final hasSequence = bootId is String && sequence is int;
     final verified =
-        cursor != null &&
-        bootId == cursor.bootId &&
-        sequence is int &&
-        sequence > cursor.sequence;
-    if (cursor != null && bootId != null && !verified) return;
+        !hasSequence ||
+        cursor == null ||
+        (bootId == cursor.bootId && sequence > cursor.sequence);
+    if (cursor != null && hasSequence && !verified) return;
     final sampledAt = _sampledAt(event.data?['sampledAt'] ?? event.message.ts);
     if (sampledAt != null &&
         sampledAt.isAfter(_now().add(const Duration(seconds: 5)))) {
@@ -667,7 +667,7 @@ class DeviceSession extends ChangeNotifier {
     return record;
   }
 
-  bool get _deviceConnected => client.device(deviceId)?.connected == true;
+  bool get _deviceConnected => client.deviceOf(deviceId)?.connected == true;
 
   static DateTime? _sampledAt(Object? value) => value is int && value > 0
       ? DateTime.fromMillisecondsSinceEpoch(value)

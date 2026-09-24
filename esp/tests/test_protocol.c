@@ -9,6 +9,7 @@
 
 #define GW_V1_MAX_FRAME 65536
 #define GW_V1_MAX_GATT_OPS 4
+#define GW_FIRMWARE_VERSION "0.7.0"
 #define CONFIG_HTTPD_WS_SUPPORT 0
 #define ESP_OK 0
 #define pdTRUE 1
@@ -101,6 +102,7 @@ static void request(const char *messages) {
     cJSON *frame = cJSON_CreateObject(); cJSON_AddNumberToObject(frame, "v", 1);
     cJSON_AddStringToObject(frame, "gatewayId", "gw-test"); cJSON_AddStringToObject(frame, "clientId", "app-test");
     cJSON *items = cJSON_Parse(messages); assert(items); cJSON_AddItemToObject(frame, "messages", items);
+    cJSON *item; cJSON_ArrayForEach(item, items) if (cJSON_IsObject(item)) cJSON_AddNumberToObject(item, "v", 1);
     char *text = cJSON_PrintUnformatted(frame); gw_protocol_receive(text, strlen(text), -1);
     free(text); cJSON_Delete(frame); gw_protocol_tick();
 }
@@ -121,6 +123,13 @@ static void event(const char *type, int suffix, int status, const char *value) {
 }
 #define READ1 "{\"type\":\"req\",\"reqId\":\"r1\",\"op\":\"read\",\"deviceId\":\"AA:BB:CC:DD:EE:01\",\"service\":\"fff0\",\"char\":\"fff1\"}"
 int main(void) {
+    reset();
+    cJSON *missing_version = cJSON_Parse("{\"v\":1,\"gatewayId\":\"gw-test\",\"clientId\":\"app-test\",\"messages\":[{\"type\":\"req\",\"reqId\":\"missing-v\",\"op\":\"manage\",\"data\":{\"action\":\"status\"}}]}");
+    char *missing_text = cJSON_PrintUnformatted(missing_version);
+    gw_protocol_receive(missing_text, strlen(missing_text), -1); free(missing_text); cJSON_Delete(missing_version); gw_protocol_tick();
+    assert(number(result("missing-v"), "code", -1) == 1001);
+    assert(number(result("missing-v"), "v", 0) == 1);
+
     reset();
     request("[{\"type\":\"req\",\"reqId\":\"manage-1\",\"op\":\"manage\",\"data\":{\"action\":\"restart\"}}]");
     assert(management_calls == 1 && restart_calls == 1);

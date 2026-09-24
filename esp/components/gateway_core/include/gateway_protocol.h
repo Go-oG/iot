@@ -17,8 +17,12 @@ bool gw_protocol_event(const cJSON *event);
 void gw_protocol_tick(void);
 void gw_protocol_online(void);
 void gw_protocol_http_register(httpd_handle_t server);
+void gw_http_api_register(httpd_handle_t server);
 bool gw_protocol_owns(const uint8_t addr[6]);
 int64_t gw_protocol_timestamp(void);
+cJSON *gw_protocol_response(const cJSON *request, int code);
+const char *gw_protocol_error_text(int code);
+cJSON *gw_protocol_snapshot(void);
 
 // 返回稳定协议错误码，pending 表示需要等待蓝牙完成回调
 int gw_protocol_ble_start(const cJSON *request, const uint8_t addr[6], uint8_t addr_type,

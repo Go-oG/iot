@@ -246,7 +246,7 @@ class DeviceRegistryService {
       connection: state.connection,
       mqttIsOnline: state.gatewayOnline,
       hardwareConnected: state.connected && state.gatewayOnline &&
-          (state.device(selectedDeviceId ?? '')?.connected ?? false),
+          (state.deviceOf(selectedDeviceId ?? '')?.connected ?? false),
       lastTime: state.lastSeen,
       message: state.message,
     );

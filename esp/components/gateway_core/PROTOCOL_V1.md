@@ -9,12 +9,13 @@
 | MQTT 下行 | `iot/v1/{gatewayId}/down` | QoS 1，拒绝 retained 控制消息，支持分片重组 |
 | MQTT 上行 | `iot/v1/{gatewayId}/up` | 响应、hello、connection、scan、notify、state、overflow |
 | 在线状态 | `iot/v1/{gatewayId}/presence` | QoS 1 + retained，配置离线 LWT |
+| HTTP API | `POST http://<网关IP>/api/v1` | 请求体直接使用一条 V1 请求消息，响应结构相同 |
 | WebSocket | `ws://<网关IP>/ble/v1` | 同一 Frame 格式，响应只发回原会话，事件广播 |
 | mDNS | `_blegw._tcp` | TXT 包含 `path=/ble/v1`、`protocol=1`、`gatewayId` |
 
-mDNS 主机名为 `blegw-<STA MAC 的十二位小写十六进制>.local`，使用 MAC 避免多网关名称冲突。WebSocket 接收完整文本帧，最大 16 KiB；不支持 WebSocket continuation 分片。MQTT 包在底层分片时会按偏移重组。
+mDNS 主机名为 `blegw-<STA MAC 的十二位小写十六进制>.local`，使用 MAC 避免多网关名称冲突。WebSocket 接收完整文本帧，最大 64 KiB；不支持 WebSocket continuation 分片。MQTT 包在底层分片时会按偏移重组。
 
-Frame 必须包含 `v:1`、匹配本机的 `gatewayId`、非空 `clientId` 和 `messages` 数组；每条请求必须包含 `type:"req"`、非空 `reqId` 和 `op`。标识最大 64 字节。同一客户端必须在缓存有效期内使用不同的 reqId 标识不同操作。
+Frame 必须包含 `v:1`、匹配本机的 `gatewayId`、非空 `clientId` 和 `messages` 数组；每条请求必须包含 `v:1`、`type:"req"`、非空 `reqId` 和 `op`。标识最大 64 字节。同一客户端必须在缓存有效期内使用不同的 reqId 标识不同操作。
 
 ```json
 {
@@ -23,6 +24,7 @@ Frame 必须包含 `v:1`、匹配本机的 `gatewayId`、非空 `clientId` 和 `
   "clientId": "app-001",
   "messages": [
     {
+      "v": 1,
       "type": "req",
       "reqId": "connect-001",
       "op": "connect",
@@ -78,7 +80,7 @@ SNTP 使用 `pool.ntp.org` 校时，协议 ts 为 Unix 毫秒。首次校时完�
 
 | 资源 | 上限 |
 | --- | ---: |
-| MQTT/WebSocket 下行 Frame | 16 KiB |
+| MQTT/WebSocket 下行 Frame | 64 KiB |
 | Frame 消息数 / 待处理请求数 | 64 |
 | Batch 步数 | 32 |
 | 运行态已知设备 | 64 |
@@ -94,7 +96,7 @@ stream 保留通知次序，以 QoS 1 入 MQTT outbox，离线期间保留有界
 
 ## 设备管理与协议调度
 
-MQTT 仅使用上述三个 `iot/v1` 主题，不订阅旧 RPC 主题，也不发送旧格式响应或事件。所有控制请求都必须使用 Frame + messages 格式；未支持的操作返回 `1002`。配置和运行诊断通过本地 HTTP 管理接口访问，写操作要求同源且 `Content-Type: application/json`。
+MQTT 仅使用上述三个 `iot/v1` 主题，不订阅旧 RPC 主题，也不发送旧格式响应或事件。所有控制请求都必须使用 Frame + messages 格式；未支持的操作返回 `1002`。配置、运行诊断和设备登记可作为 `manage` 操作通过 MQTT 下发；本地 HTTP 写请求要求同源且 `Content-Type: application/json`。
 
 自动管理设备的通知同样进入统一协议层，登记的 reportMode 仅接受 latest/stream，使用同一状态缓存、通知缓冲和 V1 输出格式。已移除 all 模式及设备级 reportIntervalMs，状态聚合窗口统一为 200 ms。
 

@@ -26,8 +26,7 @@ enum GatewayTopic implements WireEnum {
   final String wire;
 }
 
-/// 协议帧与消息体使用的字段名，对应协议第 5、7 节
-///
+/// 协议帧与消息体使用的字段名
 /// 这些键只在拼装或解析 JSON 时通过 [wire] 使用，代码内一律引用枚举
 enum GatewayField implements WireEnum {
   v('v'),
@@ -128,8 +127,9 @@ enum GatewayField implements WireEnum {
   final String wire;
 }
 
-class GatewayTopics {
-  const GatewayTopics(this.gatewayId);
+class MqttTopics {
+  const MqttTopics(this.gatewayId);
+
   final String gatewayId;
 
   /// 主题版本段，与 [GatewayFrame.protocolVersion] 保持一致
@@ -285,6 +285,7 @@ enum GatewayErrorCode {
   disconnected(3101, 'DISCONNECTED'),
   serviceNotFound(4001, 'SERVICE_NOT_FOUND'),
   characteristicNotFound(4002, 'CHAR_NOT_FOUND'),
+  batchFailed(4003, 'BATCH_FAILED'),
   readFailed(4101, 'READ_FAILED'),
   writeFailed(4201, 'WRITE_FAILED'),
   subscribeFailed(4301, 'SUBSCRIBE_FAILED'),
@@ -391,7 +392,8 @@ enum GatewayWriteType implements WireEnum {
 
 /// 连接时对网关调度队列的处理策略
 enum GatewayConnectPolicy implements WireEnum {
-  queue('queue');
+  queue('queue'),
+  reject('reject');
 
   const GatewayConnectPolicy(this.wire);
 
@@ -461,7 +463,7 @@ enum GatewayAddressType implements WireEnum {
   };
 }
 
-/// 网关管理动作，对应协议第 30 节
+/// 网关管理动作
 enum GatewayManageAction implements WireEnum {
   status('status'),
   upsert('upsert'),
@@ -470,6 +472,7 @@ enum GatewayManageAction implements WireEnum {
   save('save'),
   pause('pause'),
   resume('resume'),
+  seen('seen'),
   diagnostics('diagnostics'),
   configGet('config.get'),
   configSet('config.set'),
@@ -487,6 +490,7 @@ enum GatewayManageAction implements WireEnum {
 /// 单条消息
 class GatewayMessage {
   const GatewayMessage({
+    this.version = 1,
     this.reqId,
     required this.type,
     required this.op,
@@ -504,6 +508,7 @@ class GatewayMessage {
   });
 
   factory GatewayMessage.request({
+    int version = 1,
     required GatewayOption op,
     String? reqId,
     String? deviceId,
@@ -515,6 +520,7 @@ class GatewayMessage {
     int? queueTimeout,
     Map<String, Object?>? data,
   }) => GatewayMessage(
+    version: version,
     type: GatewayMessageType.request,
     reqId: reqId,
     op: op,
@@ -528,6 +534,8 @@ class GatewayMessage {
     data: data,
   );
 
+  /// 消息版本，固定为 1
+  final int version;
   final GatewayMessageType type;
   final String? reqId;
   final GatewayOption op;
@@ -588,6 +596,7 @@ class GatewayMessage {
   }
 
   Map<String, Object?> toJson() => {
+    GatewayField.v.wire: version,
     GatewayField.type.wire: type.wire,
     if (reqId != null) GatewayField.reqId.wire: reqId,
     GatewayField.op.wire: op.wire,
@@ -605,6 +614,12 @@ class GatewayMessage {
   };
 
   factory GatewayMessage.fromJson(Map<String, dynamic> json) {
+    final rawVersion = json[GatewayField.v.wire];
+    if (rawVersion != null &&
+        (rawVersion is! int || rawVersion != GatewayFrame.protocolVersion)) {
+      throw FormatException('不支持的消息版本：$rawVersion');
+    }
+    final version = rawVersion as int? ?? GatewayFrame.protocolVersion;
     final type = GatewayMessageType.valueOf(json[GatewayField.type.wire]);
     if (type == null) {
       throw FormatException('未知的消息类型：${json[GatewayField.type.wire]}');
@@ -615,6 +630,7 @@ class GatewayMessage {
     }
     final rawData = json[GatewayField.data.wire];
     return GatewayMessage(
+      version: version,
       type: type,
       reqId: _string(json[GatewayField.reqId.wire]),
       op: op,
@@ -631,6 +647,44 @@ class GatewayMessage {
       ts: _integer(json[GatewayField.ts.wire]),
     );
   }
+
+  GatewayMessage copyWith({
+    int? version,
+    GatewayMessageType? type,
+    String? reqId,
+    GatewayOption? op,
+    String? deviceId,
+    String? service,
+    String? characteristic,
+    String? value,
+    ValueFormat? format,
+    int? timeout,
+    int? queueTimeout,
+    int? code,
+    String? message,
+    Map<String, Object?>? data,
+    int? ts,
+  }) {
+    return GatewayMessage(
+      version: version ?? this.version,
+      type: type ?? this.type,
+      reqId: reqId ?? this.reqId,
+      op: op ?? this.op,
+      deviceId: deviceId ?? this.deviceId,
+      service: service ?? this.service,
+      characteristic: characteristic ?? this.characteristic,
+      value: value ?? this.value,
+      format: format ?? this.format,
+      timeout: timeout ?? this.timeout,
+      queueTimeout: queueTimeout ?? this.queueTimeout,
+      code: code ?? this.code,
+      message: message ?? this.message,
+      data: data ?? this.data,
+      ts: ts ?? this.ts,
+    );
+  }
+
+
 }
 
 String? _string(Object? value) => value is String ? value : null;

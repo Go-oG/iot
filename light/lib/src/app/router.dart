@@ -9,11 +9,8 @@ import 'package:light/src/page/home/home_page.dart';
 import 'package:light/src/page/home/plans_page.dart';
 import 'package:light/src/page/profile_page.dart';
 
-import '../core/connection_status.dart';
-import '../page/debug/mqtt_debug_page.dart';
 import '../page/gateway_management_page.dart';
 import '../page/mqtt_settings_page.dart';
-import 'scope.dart';
 
 /// 应用内所有页面的路由定义
 enum AppRoute {
@@ -23,7 +20,6 @@ enum AppRoute {
   profile('/profile'),
   gatewayManagement('/gateway-management'),
   mqttSettings('/mqtt-settings'),
-  mqttDebug('/mqtt-debug'),
   device('/device/:deviceId'),
   deviceDebug('/device-debug/:deviceId'),
   deviceModel('/device-model'),
@@ -46,8 +42,6 @@ extension AppRouterNavigation on BuildContext {
   void pushGatewayManagement() => pushNamed(AppRoute.gatewayManagement.name);
 
   void pushMqttSettings() => pushNamed(AppRoute.mqttSettings.name);
-
-  void pushMqttDebug() => pushNamed(AppRoute.mqttDebug.name);
 
   void pushDevice(String deviceId) =>
       pushNamed(AppRoute.device.name, pathParameters: {'deviceId': deviceId});
@@ -83,19 +77,6 @@ GoRouter buildAppRouter() {
         name: AppRoute.mqttSettings.name,
         path: AppRoute.mqttSettings.path,
         builder: (context, state) => MqttSettingsPage(),
-      ),
-      GoRoute(
-        name: AppRoute.mqttDebug.name,
-        path: AppRoute.mqttDebug.path,
-        builder: (context, state) {
-          // 远程控制已连接时直接建立调试连接，避免两处状态不一致
-          return MqttDebugPage(
-            settings: AppScope.controller.remoteSettings,
-            autoConnect:
-                AppScope.controller.remote.connection ==
-                ConnectionStatus.connected,
-          );
-        },
       ),
       GoRoute(
         name: AppRoute.device.name,

@@ -40,25 +40,30 @@ class GatewayDeviceState {
   }
 
   GatewayDeviceState copyWith({
+    String? deviceId,
     ConnectionStatus? connection,
+    String? mac,
+    String? name,
+    String? addrType,
     int? rssi,
     int? lastSeen,
     Map<String, GatewayCharacteristicValue>? characteristics,
-  }) => GatewayDeviceState(
-    deviceId: deviceId,
-    mac: mac,
-    name: name,
-    addrType: addrType,
-    connection: connection ?? this.connection,
-    rssi: rssi ?? this.rssi,
-    lastSeen: lastSeen ?? this.lastSeen,
-    characteristics: characteristics ?? this.characteristics,
-  );
+  }) {
+    return GatewayDeviceState(
+      deviceId: deviceId ?? this.deviceId,
+      connection: connection ?? this.connection,
+      mac: mac ?? this.mac,
+      name: name ?? this.name,
+      addrType: addrType ?? this.addrType,
+      rssi: rssi ?? this.rssi,
+      lastSeen: lastSeen ?? this.lastSeen,
+      characteristics: characteristics ?? this.characteristics,
+    );
+  }
 }
 
 /// 网关客户端状态，供上层界面判断能否下发命令
 class GatewayClientSnapshot {
-
   const GatewayClientSnapshot({
     this.connection = ConnectionStatus.disconnected,
     this.gatewayOnline = false,
@@ -68,19 +73,36 @@ class GatewayClientSnapshot {
     this.lastSeen,
     this.message,
   });
-
   final ConnectionStatus connection;
-
   final bool gatewayOnline;
   final int? version;
   final Map<String, GatewayDeviceState> devices;
   final Map<String, Object?>? capabilities;
   final DateTime? lastSeen;
   final String? message;
-
   bool get connected => connection.isConnected;
 
-  GatewayDeviceState? device(String deviceId) => devices[deviceId];
+  GatewayDeviceState? deviceOf(String deviceId) => devices[deviceId];
+
+  GatewayClientSnapshot copyWith({
+    ConnectionStatus? connection,
+    bool? gatewayOnline,
+    int? version,
+    Map<String, GatewayDeviceState>? devices,
+    Map<String, Object?>? capabilities,
+    DateTime? lastSeen,
+    String? message,
+  }) {
+    return GatewayClientSnapshot(
+      connection: connection ?? this.connection,
+      gatewayOnline: gatewayOnline ?? this.gatewayOnline,
+      version: version ?? this.version,
+      devices: devices ?? this.devices,
+      capabilities: capabilities ?? this.capabilities,
+      lastSeen: lastSeen ?? this.lastSeen,
+      message: message ?? this.message,
+    );
+  }
 }
 
 /// 网关上行的状态、连接、Notify 等事件

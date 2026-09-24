@@ -174,21 +174,15 @@ PYTHONUTF8=1 python tests/run_host_tests.py
 
 ## HTTP / MQTT 接口
 
-| HTTP 路径 | 方法 | 用途 |
-| --- | --- | --- |
-| `/` | GET | 设备管理面板 |
-| `/config` | GET | Wi-Fi / MQTT 配置页 |
-| `/api/config` | GET / POST | 原有网关网络配置 |
-| `/api/devices` | GET | 设备配置和运行状态 |
-| `/api/devices` | POST | 校验、保存完整设备清单并重启 |
-| `/api/backup` | GET | 下载设备配置 JSON |
-| `/api/action` | POST | `scan`、`pause`、`resume` |
-| `/api/seen` | GET | 最近发现的设备 |
-| `/api/diagnostics` | GET | 网关内存、链路、MQTT 诊断 |
+HTTP 管理 API 统一使用 `POST /api/v1`，请求体是一条 V1 请求消息：
 
-操作示例：`{"op":"pause","device":"AA:BB:CC:DD:EE:01"}`，恢复时改为 `resume`；扫描为 `{"op":"scan"}`。面板沿用本地 HTTP 服务，不提供账户认证；写接口要求同源且 `Content-Type: application/json`，用于阻止其它网页代提交配置，仍应在可信局域网使用。
+```json
+{"v":1,"type":"req","reqId":"status-001","op":"manage","data":{"action":"status"}}
+```
 
-MQTT 仅使用 `iot/v1/<gateway-id>/down`、`up`、`presence`，局域网使用 `/ble/v1` WebSocket。详细接入方式、容量与运行边界见 [V1 实现说明](components/gateway_core/PROTOCOL_V1.md)。已移除旧 RPC 入口及旧格式上报，所有 MQTT 控制请求必须使用 Frame + messages。设备查询使用 snapshot，本地配置与诊断使用 HTTP 管理接口。
+每个请求都必须携带版本号 `v:1` 和当前请求 ID `reqId`。响应同样包含 `v`、`reqId`、`op`、`code`、`message` 和可选的 `data`。设备登记、配置、诊断、扫描、暂停恢复和重启均通过 `manage` 的 `data.action` 区分。
+
+MQTT 仅使用 `iot/v1/<gateway-id>/down`、`up`、`presence`，局域网使用 `/ble/v1` WebSocket。MQTT 的 `messages` 数组复用与 HTTP 完全相同的请求和响应消息结构。详细接口见 [HTTP API](docs/http-api.md)、[MQTT V1 API](docs/mqtt-api.md) 和 [V1 实现说明](components/gateway_core/PROTOCOL_V1.md)。
 
 ## N32R8 与容量设置
 

@@ -3,7 +3,7 @@ import 'package:light/src/core/protocol/protocol.dart';
 
 void main() {
   test('主题只随网关变化，不随 BLE 设备数量增长', () {
-    const topics = GatewayTopics('gw-001');
+    const topics = MqttTopics('gw-001');
     expect(topics.down, 'iot/v1/gw-001/down');
     expect(topics.up, 'iot/v1/gw-001/up');
     expect(topics.presence, 'iot/v1/gw-001/presence');
@@ -39,6 +39,7 @@ void main() {
     expect(decoded.ts, 1712345678901);
     expect(decoded.messages, hasLength(2));
     final write = decoded.messages.first;
+    expect(write.version, 1);
     expect(write.type, GatewayMessageType.request);
     expect(write.op, GatewayOption.write);
     expect(write.reqId, 'r1');
@@ -58,6 +59,7 @@ void main() {
       reqId: 'r1',
       characteristic: 'fff1',
     ).toJson();
+    expect(json['v'], 1);
     expect(json.keys, contains('char'));
     expect(json.containsKey('service'), isFalse);
     expect(json.containsKey('code'), isFalse);
@@ -86,8 +88,14 @@ void main() {
     );
   });
 
+  test('兼容固件事件缺失消息版本', () {
+    final event = GatewayMessage.fromJson({'type': 'event', 'op': 'hello'});
+    expect(event.version, 1);
+  });
+
   test('解析批量步骤结果与错误码', () {
     final message = GatewayMessage.fromJson({
+      'v': 1,
       'type': 'res',
       'reqId': 'b1',
       'op': 'batch',
@@ -107,7 +115,14 @@ void main() {
     expect(message.steps[1].error!.message, 'gatt write failed');
     expect(message.steps.last.skipped, isTrue);
     expect(GatewayErrorCode.labelOf(4201), 'WRITE_FAILED');
+    expect(GatewayErrorCode.batchFailed.code, 4003);
     expect(GatewayErrorCode.labelOf(1234), 'UNKNOWN_ERROR');
+  });
+
+  test('协议枚举覆盖最新管理、连接与错误码', () {
+    expect(GatewayManageAction.seen.wire, 'seen');
+    expect(GatewayConnectPolicy.reject.wire, 'reject');
+    expect(GatewayErrorCode.batchFailed.label, 'BATCH_FAILED');
   });
 
   test('值编码支持 hex、base64 与 utf8', () {
